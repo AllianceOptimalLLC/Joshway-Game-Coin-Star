@@ -1144,9 +1144,14 @@ function collectCoin(index, coinObj) {
   coins.splice(index, 1);
   scene.remove(coinObj);
   
-  coinsCollected++;
-  sfxCoin();
+  const isBonusSecret = coinObj.userData && coinObj.userData.isBonusSecret;
   const isSecret = coinObj.userData && coinObj.userData.isSecret;
+  
+  // Only count toward required if NOT an extra bonus secret (adds 3 new secrets per world without breaking 12 goal)
+  if (!isBonusSecret) {
+    coinsCollected++;
+  }
+  sfxCoin();
   if (isSecret) {
     bonusCoinsCollected = (bonusCoinsCollected || 0) + 1;
     score += 280;
@@ -1161,7 +1166,7 @@ function collectCoin(index, coinObj) {
   createCoinBurst(coinObj.position.clone());
   
   // Floating +score popup
-  spawnCollectText(coinObj.position, isSecret ? 'SECRET STAR!' : '★');
+  spawnCollectText(coinObj.position, isSecret ? (isBonusSecret ? 'BONUS SECRET!' : 'SECRET STAR!') : '★');
   
   if (coinsCollected >= COIN_COUNT) {
     spawnRisePortal();
@@ -1356,60 +1361,60 @@ function addLevelAmbientParticles(level) {
 }
 
 function spawnLevelCoins(level) {
-  // Rich unique positions per level + 2-4 SECRET hidden/bonus coins for full polish
-  // Each secret gives +250 and special popup. Hidden areas encourage exploration.
+  // Rich unique positions per level + AT LEAST 3 NEW SECRET bonus coins (extra, not required for portal)
+  // Secrets: isSecret flag + 280 score bonus + popup. In zero-g Starfield they drift more.
+  // Main 12 required to open portal. Extra 3 secrets encourage full exploration.
   let positions = [];
-  let secretIndices = []; // which in list are secrets
+  let secretIndices = []; // within the 12, small secrets
 
-  if (level === 0) { // Living Room cozy secrets: behind dresser, high shelf, under bed nook
+  if (level === 0) { // Living Room
     positions = [
       [-8,2.1,6],[7,2.3,8],[-3,5.5,-3.5],[10.5,4.2,1.8],[1.8,8.5,7.2],[-6.2,3.3,10.2],[4.5,6.5,-6.5],
-      // Secrets
-      [-10.5,1.6,-5.5], [2.5,7.8,-12.2], [-4,3.8,11.5]
+      [8.5,3.1,-9.5],[-9.2,5.8,4.2],[12,1.8,9],[-1,9.2,-5.5]
     ];
-    secretIndices = [7,8,9];
-  } else if (level === 1) { // Backyard secrets behind trees + high fence
+    secretIndices = [7,9]; // 2 within mains + 3 extra below
+  } else if (level === 1) { // Backyard
     positions = [
       [-11,3.2,-4],[9,4.5,10],[-1,9,-9],[12,6, -3],[3,2.5,14],[-7,7,1],[8,1.5,-13],
-      [-13.5,6.8,-8],[1,14,-16],[11,2.8, -15.5]
+      [-5,8,-10],[13.5,5,11],[-12,2,5]
     ];
-    secretIndices = [7,8,9];
-  } else if (level === 2) { // Playground high monkey bars + slide top secrets
+    secretIndices = [7];
+  } else if (level === 2) { // Playground
     positions = [
       [-10,6,3],[7,3.5,-7],[0,12,-1],[-5,9,-9],[8,8,11],[3,4.5,2],[-1,2.5,13],
-      [5,11, -9],[ -9.5,8.5,6 ], [10,5.2, -5]
+      [11,10,-11],[-8.2,7,7],[6,2,-8]
     ];
-    secretIndices = [7,8,9];
-  } else if (level === 3) { // City high rooftops
+    secretIndices = [7];
+  } else if (level === 3) { // City
     positions = [
       [-13,9,-13],[9,4,-10],[1,13,5],[-7,6,11],[13,8,-1],[-2,3, -14],[6,10,14],
-      [11,14,-12],[ -11,5, -3], [0,17, -7]
+      [-10,11,12],[12,7,-13],[4,15,3]
     ];
-    secretIndices = [7,8,9];
-  } else if (level === 4) { // Moon high float + crater secrets
+    secretIndices = [];
+  } else if (level === 4) { // Moon
     positions = [
       [-11,5.5,8],[11,13,6],[-2,19,-7],[14,8.5,11],[0,15.5,-1],[-12,11,-6],[9,18,9],
-      [-15,7,14],[6,23,-13],[12,4, -15]
+      [13,6,15],[-7,22,2],[5,4, -14]
     ];
-    secretIndices = [7,8,9];
-  } else if (level === 5) { // Starfield 3D hidden between debris + far
+    secretIndices = [];
+  } else if (level === 5) { // Starfield - zero g
     positions = [
       [-16,8.5,14],[9,5.5,-11],[0.5,17.5,7],[-8.5,12.5,-4.5],[11,9.5,1],[4.5,21,-9],[-5,6.5,11],[14.5,14.5,6],
-      [-18,15,-18],[18,19, -6],[ -1,28,0],[7,-2,18] // more zero-g secrets
+      [1,25,-14],[-13,4,18]
     ];
-    secretIndices = [8,9,10,11];
-  } else if (level === 6) { // Mars dune + canyon secrets
+    secretIndices = [8];
+  } else if (level === 6) { // Mars
     positions = [
       [-14,5,14],[9,9,-9],[-1,21,4],[-6,10.5,17],[13,15,-2],[-8,6.5,-11],[5,11.5,13],
-      [15,3,-14],[ -12,17,9 ],[2,4, -16]
+      [14,8,15],[-9,19,-5],[3,3,-15]
     ];
-    secretIndices = [7,8,9];
-  } else { // Io volcanic high peaks + geyser hidden
+    secretIndices = [];
+  } else { // Io
     positions = [
       [-14,5,14],[9,9,-9],[1,21,4],[-5,11,17],[13,15,-2],[-8,7,-11],[5,12,13],
-      [-2,25, -3],[16,8,11],[-10,4, -15]
+      [8,19,7],[-15,6,-4],[2,26,-8]
     ];
-    secretIndices = [7,8,9];
+    secretIndices = [];
   }
 
   const spread = (level >= 4) ? 1.0 : 1.0;
@@ -1421,15 +1426,36 @@ function spawnLevelCoins(level) {
     const isSec = secretIndices.includes(i);
     c.userData.isSecret = isSec;
     if (isSec) {
-      // make secret coins slightly different visually (bigger glow)
-      c.scale.set(1.15,1.15,1.15);
+      c.scale.set(1.12,1.12,1.12);
       if (c.children[0]) c.children[0].material.emissive = new THREE.Color(0xfacc15);
     }
     scene.add(c);
     coins.push(c);
   }
 
-  // Extra visual secret indicators (sparkle on secret coins occasionally via existing bob)
+  // === NEW: 3 dedicated EXTRA secret coins per world (bonus only, do NOT count to required 12)
+  // isSecret + bigger bonus + extra drift in Starfield. Hidden spots.
+  const extraSecrets = [];
+  if (level === 0) extraSecrets.push([-11.2,6.8,-10.5], [3,9.8,11], [-2.5,1.9, -11.8]);
+  else if (level === 1) extraSecrets.push([0,16, -17], [-14,9.5,9], [14.5,3,-7]);
+  else if (level === 2) extraSecrets.push([-3,14, -3], [12,11,8], [-10,4,-12]);
+  else if (level === 3) extraSecrets.push([15,16,-15], [-14,12,0], [2,18,16]);
+  else if (level === 4) extraSecrets.push([-18,11,17], [17,22,-10], [0,27,1]);
+  else if (level === 5) extraSecrets.push([-21,19,-21], [20,11,19], [-2,32,-5]); // far drifting
+  else if (level === 6) extraSecrets.push([16,18, -17], [-17,14,18], [0,5, -21]);
+  else extraSecrets.push([11,27,-11], [-16,9,14], [7,22,15]);
+
+  extraSecrets.forEach((p, ei) => {
+    const c = createCoinMesh();
+    c.position.set(p[0] * spread * 0.95, p[1], p[2] * spread * 0.95);
+    c.userData.baseY = c.position.y;
+    c.userData.isSecret = true;
+    c.userData.isBonusSecret = true; // extra, not required
+    c.scale.set(1.2, 1.2, 1.2);
+    if (c.children[0]) c.children[0].material.emissive = new THREE.Color(0xfacc15);
+    scene.add(c);
+    coins.push(c);
+  });
 }
 
 function spawnLevelPowerups(level) {
