@@ -1127,9 +1127,14 @@ function updateCoins(dt) {
     c.position.y = ud.baseY + Math.sin(ud.angle * ud.bobSpeed) * 0.22;
     
     if (isSpace) {
-      // Drifting in open space for challenge
-      c.position.x += Math.sin(ud.angle * 0.5) * 0.5 * dt;
-      c.position.z += Math.cos(ud.angle * 0.3) * 0.4 * dt;
+      // Drifting in open space for challenge - secrets drift FASTER/more for production feel
+      const drift = (ud.isSecret) ? 1.35 : 1.0;
+      c.position.x += Math.sin(ud.angle * 0.5) * 0.5 * dt * drift;
+      c.position.z += Math.cos(ud.angle * 0.3) * 0.4 * dt * drift;
+      if (ud.isSecret) {
+        // Extra 3D vertical drift on secrets in zero-g
+        c.position.y += Math.sin(ud.angle * 0.8) * 1.2 * dt;
+      }
     }
     
     // Collect check
@@ -1477,25 +1482,45 @@ function spawnLevelPowerups(level) {
 }
 
 function spawnNPCs(level) {
-  const count = (level < 4) ? 5 : (level===5 ? 3 : 4);
+  const count = (level < 4) ? 5 : (level===5 ? 4 : 5); // slightly more variety
   for (let i = 0; i < count; i++) {
     let npc, color;
-    if (level >= 6) {
-      color = 0xffaacc;
-      npc = new THREE.Mesh(new THREE.SphereGeometry(0.5 + Math.random()*0.15), new THREE.MeshLambertMaterial({color}));
-      npc.userData = { speed: 1.6 + Math.random(), phase: Math.random() * Math.PI*2, type: 'ioalien', bounce: Math.random() };
+    let type = 'pal';
+    if (level >= 7) {
+      color = (i%2===0) ? 0xffaa77 : 0xcc88aa;
+      npc = new THREE.Mesh(new THREE.ConeGeometry(0.45,0.9,5), new THREE.MeshLambertMaterial({color}));
+      type = 'ioalien';
+      npc.userData = { speed: 1.9 + Math.random()*0.8, phase: Math.random() * Math.PI*2, type, bounce: Math.random() };
+    } else if (level >= 6) {
+      color = 0xdd5533;
+      npc = new THREE.Mesh(new THREE.DodecahedronGeometry(0.48), new THREE.MeshLambertMaterial({color}));
+      type = 'marsrock';
+      npc.userData = { speed: 1.1, phase: Math.random() * Math.PI*2, type };
     } else if (level >= 5) {
       color = 0xaabbff;
       npc = new THREE.Mesh(new THREE.SphereGeometry(0.48 + Math.random()*0.1), new THREE.MeshLambertMaterial({color}));
-      npc.userData = { speed: 2.1 + Math.random(), phase: Math.random() * Math.PI*2, type: 'starfloat', bounce: Math.random() };
+      type = 'starfloat';
+      npc.userData = { speed: 2.4 + Math.random(), phase: Math.random() * Math.PI*2, type, bounce: Math.random() };
+    } else if (level >= 4) {
+      color = i%2 ? 0xaaaaff : 0x88ddff;
+      npc = new THREE.Mesh(new THREE.OctahedronGeometry(0.42), new THREE.MeshLambertMaterial({color}));
+      type = 'moonbot';
+      npc.userData = { speed: 0.9 + Math.random()*0.7, phase: Math.random() * Math.PI*2, type };
     } else if (level >= 3) {
       color = i%2 ? 0xffa500 : 0x4169e1;
       npc = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.7), new THREE.MeshLambertMaterial({color}));
-      npc.userData = { speed: 1.8, phase: Math.random() * Math.PI*2, type: 'citykid' };
+      type = 'citykid';
+      npc.userData = { speed: 1.8, phase: Math.random() * Math.PI*2, type };
+    } else if (level === 2) {
+      color = (i%3===0) ? 0xf472b6 : 0x22cc88;
+      npc = new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.3,0.8,8), new THREE.MeshLambertMaterial({color}));
+      type = 'playpal';
+      npc.userData = { speed: 1.35 + Math.random(), phase: Math.random() * Math.PI*2, type };
     } else {
       color = i%2 ? 0xf472b6 : 0x10b981;
       npc = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.8), new THREE.MeshLambertMaterial({color}));
-      npc.userData = { speed: 1.2 + Math.random(), phase: Math.random() * Math.PI*2, type: 'pal' };
+      type = 'pal';
+      npc.userData = { speed: 1.2 + Math.random(), phase: Math.random() * Math.PI*2, type };
     }
     npc.position.set(-11 + i*4.2 + Math.random()*2.5, 1.55, 2.5 + Math.random()*11);
     scene.add(npc);
