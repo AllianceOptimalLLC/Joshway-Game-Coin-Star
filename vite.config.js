@@ -1,11 +1,16 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  base: '/',
   server: {
     open: true,
     port: 5173
   },
   build: {
-    target: 'es2020'
+    target: 'es2020',
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: false,
+    chunkSizeWarningLimit: 1000
   }
 });

@@ -273,6 +273,17 @@
       z-index: 90;
       mix-blend-mode: multiply;
     }
+
+    /* Enhanced level select + highscore polish */
+    #hs-modal {
+      background: rgba(10,10,30,0.96);
+      border: 5px solid #f5d742;
+      box-shadow: 0 0 0 5px #000, 0 0 0 10px #8c3cc8;
+      font-size: 11px;
+    }
+    #hs-modal table th, #hs-modal table td { padding: 3px 7px; text-align: left; }
+    #level-select div { transition: transform 0.08s ease; }
+    #level-select div:hover { transform: scale(1.02); border-color: #f5d742 !important; }
   </style>
 </head>
 <body>
@@ -285,13 +296,14 @@
   <div id="start-screen" class="ui-overlay panel retro-text" style="display: block;">
     <h1>JOSHWAY</h1>
     <div class="subtitle">COURAGE TO RISE • 3D STAR COIN ADVENTURE</div>
+    <img src="/joshway-courage-banner.jpg" alt="Joshway hero with courage star" style="max-width: 280px; margin: 6px auto 8px; border: 3px solid #f5d742; border-radius:2px; display:block; image-rendering: pixelated;" />
     
     <div style="margin: 20px 0; font-size: 11px; line-height: 1.7; color: #c0c0ff;">
-      Collect all Star Coins in each world to RISE to the next!<br>
+      Collect all 12 Star Coins per world (find SECRET ones too!) to RISE to the next!<br>
       Living Room → Backyard → Playground → City → Moon → <b>Open Starfield (zero-g!)</b> → Mars → Io<br>
-      HOLD SPACE to rise with your cape. Each world has unique music & challenges.<br>
-      Funny friends may get in the way (but they're just playing!)<br>
-      <span style="font-size:10px;opacity:0.8">Inspired by Maggie Isamoyer's Joshway books</span>
+      HOLD SPACE to rise with your cape + refuel orbs. Power-ups: Magnet / Surge!<br>
+      Funny NPC pals bump & chat (press E). Unique music & visuals per world.<br>
+      <span style="font-size:10px;opacity:0.8">Inspired by Maggie Isamoyer's warm & empowering Joshway illustrations</span>
     </div>
     
     <div>
@@ -352,7 +364,7 @@
   
   <!-- Instructions hint -->
   <div id="instructions" class="retro-text" style="display: none;">
-    CLICK TO LOCK • WASD MOVE • HOLD SPACE = RISE WITH COURAGE (climb high while meter lasts) • Gather light orbs • M=music • ESC unlock
+    CLICK TO LOCK • WASD MOVE • HOLD SPACE = RISE • E=TALK TO PALS • MAGNET/SURGE POWERUPS • M=MUSIC • ESC PAUSE
   </div>
   
   <!-- Win Screen -->

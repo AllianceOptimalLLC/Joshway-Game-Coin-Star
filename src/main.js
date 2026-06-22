@@ -76,6 +76,9 @@ let npcs = []; // funny CPU characters that interfere playfully
 let currentGravity = -26;
 let levelCoinsNeeded = COIN_COUNT;
 let beatenLevels = JSON.parse(localStorage.getItem('joshway_beaten') || '[]');
+let levelObjects = []; // track level-specific meshes for clean removal on switch (fixes prop accumulation bug)
+let activePowerupEffects = {}; // for temp powerups like magnet
+let bonusCoinsCollected = 0; // extra secrets for score
 
 const CHARACTERS = [
   { id: 0, name: "Joshway", suit: 0x3b82f6, cape: 0xf97316, skin: 0x8b5e3c, glasses: 0xf59e0b, desc: "The brave hero with the orange cape" },
@@ -622,14 +625,56 @@ function pointInAABB(p, aabb) {
           p.z > aabb.min.z && p.z < aabb.max.z);
 }
 
+// Clear all level-specific objects, colliders, particles to prevent accumulation across worlds (bug fix)
+function clearLevel() {
+  // Remove tracked level objects (furniture, themed props, starfields, etc)
+  levelObjects.forEach(obj => {
+    if (obj && obj.parent) scene.remove(obj);
+    // also remove lights attached if any
+    if (obj && obj.userData && obj.userData.light) {
+      try { scene.remove(obj.userData.light); } catch(e){}
+    }
+  });
+  levelObjects.length = 0;
+
+  // Clear dynamic
+  [...coins, ...powerups, ...npcs].forEach(obj => {
+    if (obj && obj.parent) scene.remove(obj);
+  });
+  coins.length = 0;
+  powerups.length = 0;
+  npcs.length = 0;
+
+  if (hazard) { scene.remove(hazard); hazard = null; }
+  if (risePortal) {
+    scene.remove(risePortal);
+    if (risePortal.userData && risePortal.userData.light) scene.remove(risePortal.userData.light);
+    risePortal = null;
+  }
+
+  // Clear starfields / special
+  scene.children.filter(c => c.userData && (c.userData.isStarfield || c.userData.isLevelProp)).forEach(c => scene.remove(c));
+
+  // Reset colliders for fresh per-level geometry
+  colliders.length = 0;
+
+  // Reset temp effects
+  activePowerupEffects = {};
+  bonusCoinsCollected = 0;
+  jetParticles.forEach(p => scene.remove(p));
+  jetParticles.length = 0;
+  coinParticles.forEach(p => scene.remove(p));
+  coinParticles.length = 0;
+}
+
 function resolvePlayerCollision() {
-  // Simple AABB vs sphere-ish resolution
+  // Improved AABB vs player collision - better bed / platform handling (fixes clipping issues)
   const p = player.position;
   const r = player.radius;
   let collided = false;
   
   for (const box of colliders) {
-    // find closest point on box to player center (XZ mainly + Y)
+    // closest point
     const closest = new THREE.Vector3(
       clamp(p.x, box.min.x, box.max.x),
       clamp(p.y, box.min.y, box.max.y),
@@ -637,315 +682,316 @@ function resolvePlayerCollision() {
     );
     
     const diff = p.clone().sub(closest);
-    const dist2 = diff.x*diff.x + diff.z*diff.z; // horizontal mainly
+    const dist2 = diff.x*diff.x + diff.z*diff.z;
     
-    if (dist2 < r*r && p.y < box.max.y && p.y + player.height * 0.6 > box.min.y) {
+    // Side push (improved tolerance)
+    const yOverlap = (p.y + player.height * 0.65 > box.min.y) && (p.y < box.max.y + 0.15);
+    if (dist2 < r*r && yOverlap) {
       const dist = Math.sqrt(dist2) || 0.0001;
-      const push = (r - dist) * 1.02;
+      const push = (r - dist) * 1.08;
       p.x += (diff.x / dist) * push;
       p.z += (diff.z / dist) * push;
-      // small velocity damp
-      player.velocity.x *= 0.6;
-      player.velocity.z *= 0.6;
+      player.velocity.x *= 0.55;
+      player.velocity.z *= 0.55;
       collided = true;
     }
     
-    // vertical floor / ceiling of box
-    if (p.x > box.min.x && p.x < box.max.x && p.z > box.min.z && p.z < box.max.z) {
-      // standing on top
-      if (player.velocity.y <= 0 && p.y + 0.1 >= box.max.y - 0.05 && p.y < box.max.y + 1.1) {
-        p.y = box.max.y + 0.01;
+    // Platform top landing / floor
+    const onTopXZ = (p.x > box.min.x - 0.1 && p.x < box.max.x + 0.1 && p.z > box.min.z - 0.1 && p.z < box.max.z + 0.1);
+    if (onTopXZ) {
+      // standing on top (good for beds/dressers/desks)
+      if (player.velocity.y <= 0.05 && p.y + 0.08 >= box.max.y - 0.03 && p.y < box.max.y + 1.6) {
+        p.y = box.max.y + 0.015;
         player.velocity.y = Math.max(player.velocity.y, 0);
         player.onGround = true;
         player.canDoubleJump = true;
+        collided = true;
       }
-      // head bump
-      if (player.velocity.y > 0 && p.y + player.height < box.max.y + 0.2 && p.y + player.height > box.min.y) {
-        player.velocity.y = -0.2;
+      // head bump ceiling
+      if (player.velocity.y > 0 && p.y + player.height > box.min.y && p.y + player.height < box.max.y + 0.35) {
+        player.velocity.y = -0.25;
+        collided = true;
       }
     }
   }
   return collided;
 }
 
-// ============== CREATE WORLD ==============
-function buildWorld() {
-  const floorTex = createWoodTexture();
-  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
-  floorTex.repeat.set(5, 4);
-  
-  const starTex = createStarTexture('#0c254f', '#fde047');
-  
-  // FLOOR - grassy playground
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(ROOM.w, ROOM.d),
-    new THREE.MeshLambertMaterial({ color: 0x4ade80 })
-  );
+// ============== CREATE LEVEL WORLD (per-level full builds for polish) ==============
+// Replaces old buildWorld + buildLevelProps. Fully themed environments, proper clear, better visuals
+function addLevelProp(obj) {
+  scene.add(obj);
+  levelObjects.push(obj);
+  if (obj.castShadow !== undefined) obj.castShadow = true;
+  if (obj.receiveShadow !== undefined) obj.receiveShadow = true;
+  obj.userData = obj.userData || {};
+  obj.userData.isLevelProp = true;
+}
+
+function buildLevelWorld(level) {
+  const lvl = LEVELS[level] || LEVELS[0];
+  const groundColor = lvl.ground || 0x4ade80;
+  const skyColor = lvl.sky || 0x87ceeb;
+
+  // Core floor - themed per world
+  let floorMat;
+  if (level === 0) { // Living Room wood
+    const floorTex = createWoodTexture();
+    floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+    floorTex.repeat.set(6, 5);
+    floorMat = new THREE.MeshLambertMaterial({ map: floorTex, color: 0x8b7355 });
+  } else if (level === 1) { // Backyard grass
+    floorMat = new THREE.MeshLambertMaterial({ color: groundColor, emissive: 0x0a3d0a });
+  } else if (level === 5) { // Starfield - no solid floor, use dark void
+    floorMat = new THREE.MeshLambertMaterial({ color: 0x000005 });
+  } else if (level === 7) { // Io volcanic
+    floorMat = new THREE.MeshLambertMaterial({ color: 0x8b4513, emissive: 0x331100 });
+  } else {
+    floorMat = new THREE.MeshLambertMaterial({ color: groundColor });
+  }
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.w, ROOM.d), floorMat);
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0;
+  floor.position.y = -0.01;
+  addLevelProp(floor);
   floor.receiveShadow = true;
-  scene.add(floor);
-  
-  // WALLS / SKY BOUNDARIES - warm sky realm with glowing courage feel
-  const wallMat = new THREE.MeshLambertMaterial({ color: 0x60a5fa }); // soft sky blue
-  
-  // Back wall (-Z)
+
+  // Walls / boundaries - color per theme, softer for kid adventure
+  let wallColor = (level === 0) ? 0xf3e8d8 : (level === 1 ? 0x6b8e23 : skyColor * 1.1 | 0); // approx
+  if (level === 4 || level === 5) wallColor = 0x112244;
+  if (level === 6) wallColor = 0x662222;
+  if (level === 7) wallColor = 0x3a2f1f;
+
+  const wallMat = new THREE.MeshLambertMaterial({ color: wallColor });
+
   const backWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.w, ROOM.h), wallMat);
   backWall.position.set(0, ROOM.h / 2, -ROOM.d / 2);
-  scene.add(backWall);
-  
-  // Front wall (+Z) - with doorway opening simulation
+  addLevelProp(backWall);
+
   const frontWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.w, ROOM.h), wallMat);
   frontWall.position.set(0, ROOM.h / 2, ROOM.d / 2);
   frontWall.rotation.y = Math.PI;
-  scene.add(frontWall);
-  
-  // Left wall
+  addLevelProp(frontWall);
+
   const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.d, ROOM.h), wallMat);
   leftWall.rotation.y = Math.PI / 2;
   leftWall.position.set(-ROOM.w / 2, ROOM.h / 2, 0);
-  scene.add(leftWall);
-  
-  // Right wall
+  addLevelProp(leftWall);
+
   const rightWall = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.d, ROOM.h), wallMat);
   rightWall.rotation.y = -Math.PI / 2;
   rightWall.position.set(ROOM.w / 2, ROOM.h / 2, 0);
-  scene.add(rightWall);
-  
-  // Ceiling - open sky
-  const ceil = new THREE.Mesh(
-    new THREE.PlaneGeometry(ROOM.w, ROOM.d),
-    new THREE.MeshLambertMaterial({ color: 0xbae6fd })
-  );
+  addLevelProp(rightWall);
+
+  // Ceiling tint
+  const ceilCol = (level === 5) ? 0x000022 : (level === 7 ? 0x4a3a2a : 0xbae6fd);
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.w, ROOM.d), new THREE.MeshLambertMaterial({ color: ceilCol }));
   ceil.rotation.x = Math.PI / 2;
   ceil.position.y = ROOM.h;
-  scene.add(ceil);
-  
-  // Add wall colliders (slightly inset)
-  const inset = 0.3;
-  colliders.push(makeAABB(0, 0, -ROOM.d/2 + inset, ROOM.w - 1, ROOM.h, 0.6)); // back
-  colliders.push(makeAABB(0, 0, ROOM.d/2 - inset, ROOM.w - 1, ROOM.h, 0.6));  // front
-  colliders.push(makeAABB(-ROOM.w/2 + inset, 0, 0, 0.6, ROOM.h, ROOM.d - 1)); // left
-  colliders.push(makeAABB(ROOM.w/2 - inset, 0, 0, 0.6, ROOM.h, ROOM.d - 1));  // right
-  
-  // FLOOR COLLIDER
-  colliders.push(makeAABB(0, -0.3, 0, ROOM.w + 2, 0.6, ROOM.d + 2));
-  
-  // RUG (blue swirl like reference)
-  const rug = new THREE.Mesh(
-    new THREE.CircleGeometry(5.5, 5),
-    new THREE.MeshLambertMaterial({ color: 0x1e3a8a })
-  );
-  rug.rotation.x = -Math.PI / 2;
-  rug.position.set(-5, 0.02, 6);
-  scene.add(rug);
-  
-  // ============== FURNITURE ==============
-  
-  // PINK GAME DESK (main piece) - larger room placement
-  const deskMat = new THREE.MeshLambertMaterial({ color: 0xc0267a });
-  const deskTop = new THREE.Mesh(new THREE.BoxGeometry(5, 0.32, 2.4), deskMat);
-  deskTop.position.set(12, 2.1, -8);
-  deskTop.castShadow = deskTop.receiveShadow = true;
-  scene.add(deskTop);
-  colliders.push(makeAABB(7.5, 0, -4, 5, 2.1, 2.4));
-  
-  // Desk legs
-  const legMat = new THREE.MeshLambertMaterial({ color: 0x3f2a1f });
-  [-2.1, 2.1].forEach(zOff => {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.32, 2.0, 0.32), legMat);
-    leg.position.set(7.5, 1.0, -4 + zOff);
-    scene.add(leg);
-  });
-  
-  // GAME BOX sign on desk
-  const sign = new THREE.Mesh(
-    new THREE.BoxGeometry(2.4, 0.55, 0.12),
-    new THREE.MeshLambertMaterial({ color: 0x5b21b6 })
-  );
-  sign.position.set(7.5, 2.65, -2.7);
-  scene.add(sign);
-  
-  const signText = createTextSprite('GAME BOX', 0xfde047, 2);
-  signText.position.set(7.5, 2.65, -2.6);
-  scene.add(signText);
-  
-  // Desk drawers hint (front panel)
-  const drawer = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1.1, 0.1), new THREE.MeshLambertMaterial({ color: 0x9f1d63 }));
-  drawer.position.set(7.5, 1.2, -2.7);
-  scene.add(drawer);
-  
-  // CHAIR - larger room
-  const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.18, 1.2), new THREE.MeshLambertMaterial({ color: 0xc2410c }));
-  chairSeat.position.set(7, 1.3, -7);
-  scene.add(chairSeat);
-  colliders.push(makeAABB(7, 0, -7, 1.3, 1.35, 1.2));
-  
-  // Chair back
-  const chairBack = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.6, 0.15), new THREE.MeshLambertMaterial({ color: 0x9a3412 }));
-  chairBack.position.set(7, 2.1, -7.5);
-  scene.add(chairBack);
-  
-  // Chair legs
-  for (let x of [-0.45, 0.45]) for (let z of [-0.4, 0.4]) {
-    const cl = new THREE.Mesh(new THREE.BoxGeometry(0.11, 1.25, 0.11), legMat);
-    cl.position.set(7 + x, 0.65, -7 + z);
-    scene.add(cl);
-  }
-  
-  // DRESSER (white) - larger room
-  const dresser = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.8, 1.3), new THREE.MeshLambertMaterial({ color: 0xe2e8f0 }));
-  dresser.position.set(-9, 1.4, -5);
-  scene.add(dresser);
-  colliders.push(makeAABB(-9, 0, -5, 3.5, 2.8, 1.3));
-  
-  // Dresser drawers
-  for (let i = 0; i < 3; i++) {
-    const dr = new THREE.Mesh(new THREE.BoxGeometry(3, 0.6, 0.08), new THREE.MeshLambertMaterial({ color: 0xcbd5e1 }));
-    dr.position.set(-9, 0.6 + i * 0.8, -4.3);
-    scene.add(dr);
-  }
-  
-  // Globe on dresser (small sphere)
-  const globe = new THREE.Mesh(
-    new THREE.SphereGeometry(0.38, 18, 14),
-    new THREE.MeshLambertMaterial({ color: 0x334155 })
-  );
-  globe.position.set(-7.5, 3.1, -5);
-  scene.add(globe);
-  
-  // Small red cup
-  const cup = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.18, 0.15, 0.32, 12),
-    new THREE.MeshLambertMaterial({ color: 0x9f1239 })
-  );
-  cup.position.set(-10, 3.1, -5);
-  scene.add(cup);
-  
-  // BUNK / CRIB BED - larger room
-  const bedFrameMat = new THREE.MeshLambertMaterial({ color: 0x854d0e });
-  const bed = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.65, 7), new THREE.MeshLambertMaterial({ color: 0x1e3a8a }));
-  bed.position.set(-6, 1.6, 7);
-  scene.add(bed);
-  colliders.push(makeAABB(-6, 0.3, 7, 4.5, 1.0, 7));
-  
-  // Headboard
-  const headboard = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.6, 0.4), bedFrameMat);
-  headboard.position.set(-6, 2.6, 10.2);
-  scene.add(headboard);
-  
-  // Colorful bed posts (like video)
-  const postColors = [0xc0267a, 0x7c3aed, 0x0ea5e9, 0xf59e0b];
-  const postPos = [[-8.2, 1.0, 10], [ -3.8, 1.0, 10], [-8.2, 1.0, 4], [-3.8, 1.0, 4]];
-  postPos.forEach((pos, i) => {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.4, 8), 
-      new THREE.MeshLambertMaterial({ color: postColors[i % 4] }));
-    post.position.set(pos[0], pos[1], pos[2]);
-    scene.add(post);
-  });
-  
-  // Pillow / quilt detail
-  const pillow = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.4, 1.6), new THREE.MeshLambertMaterial({ color: 0xf1e7d9 }));
-  pillow.position.set(-6, 2.0, 8.5);
-  scene.add(pillow);
-  
-  // RED CABINET / BOX (from video) - larger room
-  const redBox = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.3, 1.1), new THREE.MeshLambertMaterial({ color: 0xb91c1c }));
-  redBox.position.set(-1, 1.15, -9);
-  scene.add(redBox);
-  colliders.push(makeAABB(-1, 0, -9, 1.6, 2.3, 1.1));
-  
-  // Small logo on red box
-  const redLogo = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.1), new THREE.MeshLambertMaterial({ color: 0xfde047 }));
-  redLogo.position.set(-1, 1.7, -8.4);
-  scene.add(redLogo);
-  
-  // LAMP - larger room
-  const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 0.12, 12), new THREE.MeshLambertMaterial({ color: 0x431407 }));
-  lampBase.position.set(9.5, 0.1, 5);
-  scene.add(lampBase);
-  
-  const lampPole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.5, 8), new THREE.MeshLambertMaterial({ color: 0x1f2937 }));
-  lampPole.position.set(9.5, 1.3, 5);
-  scene.add(lampPole);
-  
-  const lampShade = new THREE.Mesh(new THREE.ConeGeometry(1, 1.5, 18, 1, true), new THREE.MeshLambertMaterial({ color: 0x9f1239, side: THREE.DoubleSide }));
-  lampShade.position.set(9.5, 2.8, 5);
-  lampShade.rotation.x = Math.PI;
-  scene.add(lampShade);
-  
-  // Lamp light
-  const lampLight = new THREE.PointLight(0xffd28f, 1.4, 16);
-  lampLight.position.set(9.5, 2.3, 5);
-  scene.add(lampLight);
-  
-  // WINDOW (suburban view glimpse) - larger room
-  const windowFrame = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.5, 0.28), new THREE.MeshLambertMaterial({ color: 0xe2e8f0 }));
-  windowFrame.position.set(-12.2, 4, 1);
-  scene.add(windowFrame);
-  
-  const windowGlass = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.9), new THREE.MeshLambertMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.6 }));
-  windowGlass.position.set(-12.3, 4, 1.2);
-  windowGlass.rotation.y = Math.PI / 2;
-  scene.add(windowGlass);
-  
-  // Blinds
-  const blinds = new THREE.Mesh(new THREE.PlaneGeometry(3, 0.7), new THREE.MeshLambertMaterial({ color: 0xb45309 }));
-  blinds.position.set(-12.3, 5.2, 1.25);
-  blinds.rotation.y = Math.PI / 2;
-  scene.add(blinds);
-  
-  // Outside simple house shape
-  const house = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, 0.7), new THREE.MeshLambertMaterial({ color: 0x854d0e }));
-  house.position.set(-14.5, 3.5, 1);
-  scene.add(house);
-  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.7, 1.2, 4), new THREE.MeshLambertMaterial({ color: 0x334155 }));
-  roof.position.set(-14.5, 5.2, 1);
-  roof.rotation.y = Math.PI / 4;
-  scene.add(roof);
-  
-  // Simple floating shelf on wall - larger room
-  const shelf = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.16, 0.9), new THREE.MeshLambertMaterial({ color: 0x3f2a1f }));
-  shelf.position.set(1, 6.5, -12.5);
-  scene.add(shelf);
-  
-  // Small box on shelf (like in video)
-  const boxSmall = new THREE.Mesh(new THREE.BoxGeometry(1, 0.85, 0.75), new THREE.MeshLambertMaterial({ color: 0x854d0e }));
-  boxSmall.position.set(2.5, 7, -12.4);
-  scene.add(boxSmall);
-  
-  // Books on lower shelf
-  const books = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.7, 0.5), new THREE.MeshLambertMaterial({ color: 0x334155 }));
-  books.position.set(-1.5, 5, -12.5);
-  scene.add(books);
-  
-  // Add more small details
-  const tiCube = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.6), new THREE.MeshLambertMaterial({ color: 0x854d0e }));
-  tiCube.position.set(4, 2.4, -5.5);
-  scene.add(tiCube);
+  addLevelProp(ceil);
 
-  // HAZARD: spinning toy on floor - moves in a pattern, bumps player (real game challenge)
-  hazard = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.5, 0.6, 0.7, 8),
-    new THREE.MeshLambertMaterial({ color: 0xef4444 })
-  );
-  hazard.position.set(2, 0.4, 2);
-  scene.add(hazard);
-  // simple "face" detail
-  const hazardFace = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.15, 0.6), new THREE.MeshLambertMaterial({color:0xfde047}));
-  hazardFace.position.set(2, 0.7, 2.25);
-  scene.add(hazardFace);
+  // Colliders - always fresh walls + floor
+  const inset = 0.35;
+  colliders.push(makeAABB(0, 0, -ROOM.d/2 + inset, ROOM.w - 1, ROOM.h, 0.7));
+  colliders.push(makeAABB(0, 0, ROOM.d/2 - inset, ROOM.w - 1, ROOM.h, 0.7));
+  colliders.push(makeAABB(-ROOM.w/2 + inset, 0, 0, 0.7, ROOM.h, ROOM.d - 1));
+  colliders.push(makeAABB(ROOM.w/2 - inset, 0, 0, 0.7, ROOM.h, ROOM.d - 1));
+  colliders.push(makeAABB(0, -0.3, 0, ROOM.w + 3, 0.6, ROOM.d + 3));
 
-  // BIG GLOWING COURAGE SUN / STAR - central landmark from the book art, high up
-  const courageSun = new THREE.Mesh(
-    new THREE.SphereGeometry(1.2, 20, 16),
-    new THREE.MeshBasicMaterial({ color: 0xfde047 })
-  );
-  courageSun.position.set(0, 8.5, -8);
-  scene.add(courageSun);
-  const sunGlow = new THREE.PointLight(0xfacc15, 1.8, 25);
-  sunGlow.position.copy(courageSun.position);
-  scene.add(sunGlow);
+  // === THEMED PROPS + LIGHTING + PARTICLES per level (warm empowering kid adventure style) ===
+  // Add level ambient lighting variety
+  const hemiLvl = new THREE.HemisphereLight(level === 6 ? 0xffaa66 : 0xffffff, level === 7 ? 0x331100 : 0x334455, level === 5 ? 0.6 : 0.9);
+  scene.add(hemiLvl);
+  levelObjects.push(hemiLvl);
+
+  const mainLight = new THREE.DirectionalLight(level === 6 ? 0xffcc88 : 0xfff4d9, level === 5 ? 0.5 : 0.9);
+  mainLight.position.set(8, 22, level === 5 ? -10 : 6);
+  mainLight.castShadow = true;
+  scene.add(mainLight);
+  levelObjects.push(mainLight);
+
+  if (level === 0) {
+    // COZY LIVING ROOM - furniture, warm lamp, rug, bed detail
+    const floorTex = createWoodTexture();
+    floor.material.map = floorTex; // override already
+    // Rug
+    const rug = new THREE.Mesh(new THREE.CircleGeometry(6, 5), new THREE.MeshLambertMaterial({color: 0x1e3a8a}));
+    rug.rotation.x = -Math.PI/2; rug.position.set(-4, 0.03, 7);
+    addLevelProp(rug);
+
+    // Pink desk
+    const desk = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.35, 2.5), new THREE.MeshLambertMaterial({color: 0xc0267a}));
+    desk.position.set(11, 2.15, -8); addLevelProp(desk);
+    colliders.push(makeAABB(11, 0, -8, 5.2, 2.2, 2.5));
+
+    // Chair, dresser, bed (fix bed collision better by adding top platform)
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.7, 7.2), new THREE.MeshLambertMaterial({color: 0x1e3a8a}));
+    bed.position.set(-5.5, 1.65, 7.5); addLevelProp(bed);
+    colliders.push(makeAABB(-5.5, 1.3, 7.5, 4.8, 0.7, 7.2));
+
+    const headboard = new THREE.Mesh(new THREE.BoxGeometry(4.8, 2.5, 0.45), new THREE.MeshLambertMaterial({color: 0x854d0e}));
+    headboard.position.set(-5.5, 2.5, 10.8); addLevelProp(headboard);
+    colliders.push(makeAABB(-5.5, 1.3, 10.8, 4.8, 2.5, 0.45));
+
+    // Posts
+    [[-8,1,11],[-3,1,11],[-8,1,4],[-3,1,4]].forEach((p,i) => {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.15,3.2,8), new THREE.MeshLambertMaterial({color: [0xc0267a,0x7c3aed,0x0ea5e9,0xf59e0b][i]}));
+      post.position.set(p[0],p[1],p[2]); addLevelProp(post);
+    });
+
+    // Pillow
+    const pillow = new THREE.Mesh(new THREE.BoxGeometry(2.6,0.35,1.5), new THREE.MeshLambertMaterial({color:0xf1e7d9}));
+    pillow.position.set(-5.5,2.05,8.8); addLevelProp(pillow);
+
+    // Lamp with nice point light
+    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.3,0.4,0.1,12), new THREE.MeshLambertMaterial({color:0x431407}));
+    lamp.position.set(9,0.1,5); addLevelProp(lamp);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,2.2,8), new THREE.MeshLambertMaterial({color:0x1f2937}));
+    pole.position.set(9,1.1,5); addLevelProp(pole);
+    const shade = new THREE.Mesh(new THREE.ConeGeometry(0.9,1.3,16,1,true), new THREE.MeshLambertMaterial({color:0x9f1239, side:THREE.DoubleSide}));
+    shade.position.set(9,2.6,5); shade.rotation.x = Math.PI; addLevelProp(shade);
+    const lampL = new THREE.PointLight(0xffe0a0, 1.6, 18);
+    lampL.position.set(9,2.2,5); scene.add(lampL); levelObjects.push(lampL);
+
+    // Window + outside peek + courage sun landmark
+    const win = new THREE.Mesh(new THREE.BoxGeometry(3,2.3,0.3), new THREE.MeshLambertMaterial({color:0xe2e8f0}));
+    win.position.set(-12,3.8,1); addLevelProp(win);
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(2.5,1.7), new THREE.MeshLambertMaterial({color:0xbae6fd, transparent:true, opacity:0.55}));
+    glass.position.set(-12.1,3.8,1.2); glass.rotation.y = Math.PI/2; addLevelProp(glass);
+
+    const courageSun = new THREE.Mesh(new THREE.SphereGeometry(1.1,18,14), new THREE.MeshBasicMaterial({color:0xfde047}));
+    courageSun.position.set(1,9,-9); addLevelProp(courageSun);
+    const sunL = new THREE.PointLight(0xfacc15, 1.9, 26); sunL.position.copy(courageSun.position); scene.add(sunL); levelObjects.push(sunL);
+
+    // Hazard toy
+    hazard = new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.65,0.65,8), new THREE.MeshLambertMaterial({color:0xef4444}));
+    hazard.position.set(2.5,0.38,1.5); addLevelProp(hazard);
+
+  } else if (level === 1) {
+    // BACKYARD - grass, trees, fence, wind hints
+    const grassPatch = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.w*0.9, ROOM.d*0.9), new THREE.MeshLambertMaterial({color:0x22aa33}));
+    grassPatch.rotation.x=-Math.PI/2; grassPatch.position.y=0.02; addLevelProp(grassPatch);
+
+    // Trees
+    for(let i=0; i<5; i++) {
+      const tx = -14 + i*7; const tz = -8 + (i%2)*4;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.6,0.9,5.5,7), new THREE.MeshLambertMaterial({color:0x5c4033}));
+      trunk.position.set(tx, 2.7, tz); addLevelProp(trunk);
+      const leaves = new THREE.Mesh(new THREE.SphereGeometry(3.2,7,6), new THREE.MeshLambertMaterial({color:0x228b22}));
+      leaves.position.set(tx, 6.5, tz); addLevelProp(leaves);
+    }
+    const fence = new THREE.Mesh(new THREE.BoxGeometry(38,1.4,0.35), new THREE.MeshLambertMaterial({color:0x8b5a2b}));
+    fence.position.set(0,0.75,-17.5); addLevelProp(fence);
+
+    // Swing set for playground feel
+    const swingPostL = new THREE.Mesh(new THREE.BoxGeometry(0.25,6,0.25), new THREE.MeshLambertMaterial({color:0x555}));
+    swingPostL.position.set(-5,3,-2); addLevelProp(swingPostL);
+    const swingPostR = swingPostL.clone(); swingPostR.position.x=5; addLevelProp(swingPostR);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(11,0.2,0.2), new THREE.MeshLambertMaterial({color:0x333}));
+    bar.position.set(0,6,-2); addLevelProp(bar);
+
+    // Courage star high
+    const starHigh = new THREE.Mesh(new THREE.SphereGeometry(0.9,12,10), new THREE.MeshBasicMaterial({color:0xfde047}));
+    starHigh.position.set(0,14,-11); addLevelProp(starHigh);
+
+  } else if (level === 2) {
+    // PLAYGROUND REALM - slides, platforms, bright
+    const slide = new THREE.Mesh(new THREE.BoxGeometry(1.8,0.3,7), new THREE.MeshLambertMaterial({color:0xff6b6b}));
+    slide.position.set(8,2.5,-6); slide.rotation.z = -0.6; addLevelProp(slide);
+    const platform = new THREE.Mesh(new THREE.BoxGeometry(6,0.4,4), new THREE.MeshLambertMaterial({color:0x3b82f6}));
+    platform.position.set(-9,5,3); addLevelProp(platform);
+    colliders.push(makeAABB(-9,4.9,3,6,0.5,4));
+    // Monkey bars
+    for(let i=-3;i<=3;i++){
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,6,6), new THREE.MeshLambertMaterial({color:0x333}));
+      bar.rotation.z = Math.PI/2; bar.position.set(i*1.8 +1 ,7.5,-8); addLevelProp(bar);
+    }
+    const bigBall = new THREE.Mesh(new THREE.SphereGeometry(2,12,10), new THREE.MeshLambertMaterial({color:0xf59e0b}));
+    bigBall.position.set(0,1.8,12); addLevelProp(bigBall);
+
+  } else if (level === 3) {
+    // CITY LIGHTS - buildings, neon, streets
+    for(let i=-2; i<=2; i++) {
+      const bH = 6 + Math.random()*8;
+      const bld = new THREE.Mesh(new THREE.BoxGeometry(3.5, bH, 4), new THREE.MeshLambertMaterial({color: i%2?0x334455:0x222233}));
+      bld.position.set(i*8.5, bH/2, -14); addLevelProp(bld);
+      // windows glow
+      const winL = new THREE.PointLight(0xffee99, 0.6, 12);
+      winL.position.set(i*8.5, 4, -13); scene.add(winL); levelObjects.push(winL);
+    }
+    const street = new THREE.Mesh(new THREE.PlaneGeometry(14, ROOM.d), new THREE.MeshLambertMaterial({color:0x444444}));
+    street.rotation.x = -Math.PI/2; street.position.set(0,0.01,4); addLevelProp(street);
+
+  } else if (level === 4) {
+    // THE MOON - craters, low rocks, flag, dreamy
+    for(let i=0; i<6; i++) {
+      const cr = new THREE.Mesh(new THREE.CylinderGeometry(1.8+Math.random(),1.9+Math.random(),0.6,16), new THREE.MeshLambertMaterial({color:0x666677}));
+      cr.position.set(-12 + i*5, 0.25, -10 + (i%3)*8); addLevelProp(cr);
+    }
+    const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,3.5,6), new THREE.MeshLambertMaterial({color:0x888}));
+    flagPole.position.set(-7,1.8,9); addLevelProp(flagPole);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.6,1), new THREE.MeshLambertMaterial({color:0xffffff, side:THREE.DoubleSide}));
+    flag.position.set(-5.8,3.5,9); flag.rotation.y = -1.2; addLevelProp(flag);
+
+    // Soft moon light
+    const moonL = new THREE.PointLight(0xeeeeff, 1.1, 60);
+    moonL.position.set(2,28,-5); scene.add(moonL); levelObjects.push(moonL);
+
+  } else if (level === 5) {
+    // OPEN STARFIELD - zero g, lots of stars/debris/ nebulae
+    addStarfieldEnhanced(); // special particles
+
+    // Floating asteroids / debris for secrets and visual
+    for(let i=0;i<9;i++) {
+      const ast = new THREE.Mesh(new THREE.IcosahedronGeometry(1.1 + Math.random()*1.2), new THREE.MeshLambertMaterial({color:0x555566}));
+      ast.position.set(-18 + i*4.5 , 4 + Math.random()*18, -18 + (i%5)*7); 
+      addLevelProp(ast);
+    }
+    // Glowing courage nebula cloud visual
+    const nebula = new THREE.Mesh(new THREE.SphereGeometry(8,12,8), new THREE.MeshBasicMaterial({color:0x4a3a8f, transparent:true, opacity:0.12}));
+    nebula.position.set(2,12, -3); addLevelProp(nebula);
+
+  } else if (level === 6) {
+    // RED MARS - dunes, rocks, canyons
+    for(let i=0;i<7;i++) {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.8 + Math.random()), new THREE.MeshLambertMaterial({color:0x992222}));
+      rock.position.set(-13 + i*5 , 1.1 , -12 + Math.sin(i)*6); addLevelProp(rock);
+    }
+    // Big dune platform
+    const dune = new THREE.Mesh(new THREE.SphereGeometry(9,10,6), new THREE.MeshLambertMaterial({color:0xb23322}));
+    dune.position.set(4, -2, 5); dune.scale.set(1,0.4,1.4); addLevelProp(dune);
+
+    const marsLight = new THREE.PointLight(0xff7744, 0.8, 40);
+    marsLight.position.set(-5,18,0); scene.add(marsLight); levelObjects.push(marsLight);
+
+  } else if (level === 7) {
+    // VOLCANIC IO - geysers, lava flows, slippery rocks, mysterious
+    for(let i=0;i<5;i++) {
+      const volc = new THREE.Mesh(new THREE.ConeGeometry(2.4, 4.5, 7), new THREE.MeshLambertMaterial({color:0x661100}));
+      volc.position.set(-10 + i*5.5, 2.2, -12 + (i%2)*3); addLevelProp(volc);
+    }
+    // Lava glow areas (use emissive plane)
+    const lava = new THREE.Mesh(new THREE.PlaneGeometry(12,3), new THREE.MeshLambertMaterial({color:0xff5500, emissive:0x441100}));
+    lava.rotation.x = -Math.PI/2; lava.position.set(3,0.08, -2); addLevelProp(lava);
+
+    const lavaLight = new THREE.PointLight(0xff6600, 1.3, 25);
+    lavaLight.position.set(3,3,-2); scene.add(lavaLight); levelObjects.push(lavaLight);
+
+    // Geyser hint (animated in update)
+    const geyser = new THREE.Mesh(new THREE.CylinderGeometry(0.6,0.8,1.5,6), new THREE.MeshLambertMaterial({color:0xffaa33}));
+    geyser.position.set(-6,1.5,8); addLevelProp(geyser);
+  }
+
+  // Common courage landmark for all + particles
+  if (level !== 0 && level !== 5) {
+    const courageOrb = new THREE.Mesh(new THREE.SphereGeometry(0.85,14,10), new THREE.MeshBasicMaterial({color:0xfde047}));
+    courageOrb.position.set(0, 11 + (level>4?4:0), -7);
+    addLevelProp(courageOrb);
+    const oL = new THREE.PointLight(0xffdd44, 1.2, 22); oL.position.copy(courageOrb.position); scene.add(oL); levelObjects.push(oL);
+  }
+
+  // Add some floating particles for juice on all levels
+  addLevelAmbientParticles(level);
 }
 
 // Simple 2D text as sprite
@@ -1039,59 +1085,33 @@ function createCoinMesh() {
   return group;
 }
 
-function createPowerupMesh() {
+function createPowerupMesh(type = 'energy') {
   const group = new THREE.Group();
+  let col = 0x4ade80;
+  let ringCol = 0x86efac;
+  if (type === 'magnet') { col = 0xa78bfa; ringCol = 0xc4b5fd; }
+  else if (type === 'surge') { col = 0xfacc15; ringCol = 0xfef08c; }
+
   const orb = new THREE.Mesh(
-    new THREE.SphereGeometry(0.22, 12, 10),
-    new THREE.MeshLambertMaterial({ color: 0x4ade80, emissive: 0x166534, emissiveIntensity: 0.4 })
+    new THREE.SphereGeometry(0.24, 13, 11),
+    new THREE.MeshLambertMaterial({ color: col, emissive: 0x166534, emissiveIntensity: 0.45 })
   );
   group.add(orb);
   const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.28, 0.04, 6, 12),
-    new THREE.MeshLambertMaterial({ color: 0x86efac })
+    new THREE.TorusGeometry(0.32, 0.05, 6, 12),
+    new THREE.MeshLambertMaterial({ color: ringCol })
   );
   ring.rotation.x = Math.PI / 2;
   group.add(ring);
-  group.userData = { baseY: 0, angle: Math.random()*Math.PI*2 };
+  group.userData = { baseY: 0, angle: Math.random()*Math.PI*2, type };
+  if (type !== 'energy') {
+    // extra ring for distinction
+    const ring2 = ring.clone(); ring2.scale.set(1.35,1.35,1.35); group.add(ring2);
+  }
   return group;
 }
 
-function spawnCoins() {
-  const positions = [
-    // Floor level - spread in larger room
-    [ -8, 0.9, 8 ], [ 1, 0.9, 9 ], [ 9, 0.9, 6 ],
-    [ -10, 0.9, -6 ], [ 3, 0.9, -7 ],
-    // On desk
-    [ 6.5, 2.7, -3 ], [ 8.5, 2.7, -4.5 ], [ 5.5, 2.7, -5 ],
-    // Floating / high - require jetpack
-    [ -3, 5.5, 1 ], [ 5, 4.5, 7 ], [ -6, 6.5, -10 ],
-    // Near bed
-    [ -8, 2.8, 4 ], [ -1, 2.7, 9.5 ],
-    // Near window / lamp + secret high spot
-    [ 9, 4.5, 4 ], [ -10, 3.5, 3 ], [ 0, 7.5, -8 ]
-  ];
-  
-  for (let i = 0; i < COIN_COUNT; i++) {
-    const c = createCoinMesh();
-    const [x, y, z] = positions[i] || [Math.random() * 8 - 4, 1.5 + Math.random() * 3.5, Math.random() * 8 - 4];
-    c.position.set(x, y, z);
-    c.userData.baseY = y;
-    scene.add(c);
-    coins.push(c);
-  }
-
-  // Energy powerups - strategic refills to enable more flight and height in bigger room
-  const puPositions = [
-    [-7, 1.3, -2], [8, 1.3, 3], [0, 5.8, -6], [6, 3.5, 8]
-  ];
-  puPositions.forEach(([x,y,z]) => {
-    const p = createPowerupMesh();
-    p.position.set(x,y,z);
-    p.userData.baseY = y;
-    scene.add(p);
-    powerups.push(p);
-  });
-}
+// Old spawnCoins fully replaced by spawnLevelCoins + per-level powerups. Removed.
 
 function updateCoins(dt) {
   const isSpace = currentLevel === 5;
@@ -1126,7 +1146,12 @@ function collectCoin(index, coinObj) {
   coinsCollected++;
   sfxCoin();
   const isSecret = coinObj.userData && coinObj.userData.isSecret;
-  score += isSecret ? 250 : 100;
+  if (isSecret) {
+    bonusCoinsCollected = (bonusCoinsCollected || 0) + 1;
+    score += 280;
+  } else {
+    score += 100;
+  }
   
   // Update HUD
   updateHUD();
@@ -1135,7 +1160,7 @@ function collectCoin(index, coinObj) {
   createCoinBurst(coinObj.position.clone());
   
   // Floating +score popup
-  spawnCollectText(coinObj.position, isSecret ? 'SECRET!' : 'Star!');
+  spawnCollectText(coinObj.position, isSecret ? 'SECRET STAR!' : '★');
   
   if (coinsCollected >= COIN_COUNT) {
     spawnRisePortal();
@@ -1148,17 +1173,44 @@ function updatePowerups(dt) {
     const ud = p.userData;
     ud.angle = (ud.angle || 0) + dt * 3;
     p.rotation.y = ud.angle * 0.5;
-    p.position.y = ud.baseY + Math.sin(ud.angle) * 0.15;
-    if (p.position.distanceTo(player.position) < 0.9) {
-      // collect: restore energy, allow more flight
-      player.energy = Math.min(1, player.energy + 0.45);
-      // sparkle
-      createCoinBurst(p.position.clone()); // reuse for green-ish
+    p.position.y = ud.baseY + Math.sin(ud.angle) * 0.16;
+    const dist = p.position.distanceTo(player.position);
+    if (dist < 1.0) {
+      const typ = ud.type || 'energy';
+      if (typ === 'magnet') {
+        activePowerupEffects.magnet = performance.now() + 9500;
+        spawnCollectText(p.position, 'MAGNET!');
+        playTone(480,0.2,'sine',0.3);
+      } else if (typ === 'surge') {
+        player.energy = 1.0;
+        activePowerupEffects.surge = performance.now() + 6500;
+        score += 80;
+        spawnCollectText(p.position, 'COURAGE SURGE!');
+        playTone(880,0.18,'sine',0.35);
+      } else {
+        player.energy = Math.min(1, player.energy + 0.52);
+        playTone(620, 0.1, 'sine', 0.25, 80);
+      }
+      createCoinBurst(p.position.clone());
       scene.remove(p);
       powerups.splice(i, 1);
-      // subtle sound reuse
-      playTone(620, 0.1, 'sine', 0.25, 80);
     }
+  }
+
+  // Apply ongoing powerup fun effects
+  if (activePowerupEffects.magnet && performance.now() < activePowerupEffects.magnet) {
+    // Pull nearby coins toward player (fun auto-collect)
+    coins.forEach(c => {
+      const d = c.position.distanceTo(player.position);
+      if (d < 9 && d > 1.2) {
+        const dir = player.position.clone().sub(c.position).normalize();
+        c.position.addScaledVector(dir, 14 * dt);
+      }
+    });
+  }
+  if (activePowerupEffects.surge && performance.now() < activePowerupEffects.surge) {
+    // Small extra lift during surge
+    if (player.jetActive) player.velocity.y += 4 * dt;
   }
 }
 
@@ -1196,18 +1248,10 @@ function switchLevel(newLevel) {
   const lvl = LEVELS[currentLevel];
   currentGravity = lvl.gravity;
 
-  // Clear previous dynamic objects
-  [...coins, ...powerups, ...npcs].forEach(obj => scene.remove(obj));
-  coins.length = 0;
-  powerups.length = 0;
-  npcs.length = 0;
-  if (hazard) { scene.remove(hazard); hazard = null; }
+  // PROPER CLEAR to fix accumulation bugs (old furniture/colliders in wrong levels)
+  clearLevel();
+  bonusCoinsCollected = 0;
 
-  // Clear previous starfields (for space levels)
-  scene.children.filter(c => c.userData && c.userData.isStarfield).forEach(c => scene.remove(c));
-
-  // Clear some static level props (we'll rebuild selectively)
-  // For simplicity, we keep core floor/walls but tint and add themed props
   // Reposition player
   const startY = (currentLevel === 5) ? 8 : 2.5; // higher start in open space
   player.position.set(0, startY, 15);
@@ -1217,8 +1261,8 @@ function switchLevel(newLevel) {
   // Change sky/fog tint for the realm
   scene.fog = new THREE.Fog(lvl.sky, 35, 90);
 
-  // Rebuild themed elements for this level
-  buildLevelProps(currentLevel);
+  // Build FULL themed world for level (walls/floor/props/lighting) -- replaces old shared buildWorld
+  buildLevelWorld(currentLevel);
 
   // Spawn coins and powerups for this level
   spawnLevelCoins(currentLevel);
@@ -1255,6 +1299,7 @@ function switchLevel(newLevel) {
   if (lvlNameEl) lvlNameEl.textContent = (LEVELS[currentLevel] ? LEVELS[currentLevel].name.toUpperCase() : '');
 
   coinsCollected = 0;
+  bonusCoinsCollected = 0;
   levelStartTime = performance.now();
   score = 0;
   updateHUD();
@@ -1273,99 +1318,130 @@ function switchLevel(newLevel) {
   }
 }
 
-function buildLevelProps(level) {
-  const lvl = LEVELS[level];
-  // Add level-specific props 
+// Old buildLevelProps fully superseded by buildLevelWorld + helpers above. Removed for clean per-level.
 
-  if (level === 0) { // Living Room - cozy indoor
-    const couch = new THREE.Mesh(new THREE.BoxGeometry(6, 1.2, 2.5), new THREE.MeshLambertMaterial({color: 0x8b4513}));
-    couch.position.set(-8, 0.6, 8);
-    scene.add(couch);
-    const tv = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 0.3), new THREE.MeshLambertMaterial({color: 0x222}));
-    tv.position.set(10, 1.5, 5);
-    scene.add(tv);
-  } else if (level === 1) { // Backyard
-    const tree = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.2, 8, 6), new THREE.MeshLambertMaterial({color: 0x228b22}));
-    tree.position.set(-10, 4, -5);
-    scene.add(tree);
-    const fence = new THREE.Mesh(new THREE.BoxGeometry(20, 1.5, 0.2), new THREE.MeshLambertMaterial({color: 0x8b4513}));
-    fence.position.set(0, 0.8, -15);
-    scene.add(fence);
-  } else if (level === 4) { // Moon
-    const crater = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 0.5, 12), new THREE.MeshLambertMaterial({color: 0x808080}));
-    crater.position.set(10, 0.3, 5);
-    scene.add(crater);
-    const flag = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2, 1), new THREE.MeshLambertMaterial({color: 0xfff}));
-    flag.position.set(-8, 1.5, 8);
-    scene.add(flag);
-  } else if (level === 5) { // Open Starfield - new space level, stars, no floor
-    // Add starfield for open space
-    addStarfield();
-    // Floating debris for challenge
-    const debris = new THREE.Mesh(new THREE.IcosahedronGeometry(1), new THREE.MeshLambertMaterial({color: 0x444444}));
-    debris.position.set(10, 10, -10);
-    scene.add(debris);
-  } else if (level === 6) { // Mars
-    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2), new THREE.MeshLambertMaterial({color: 0xb22222}));
-    rock.position.set(12, 1, -8);
-    scene.add(rock);
-  } else if (level === 7) { // Io
-    const volcano = new THREE.Mesh(new THREE.ConeGeometry(2, 3, 8), new THREE.MeshLambertMaterial({color: 0x8b0000}));
-    volcano.position.set(5, 1.5, -10);
-    scene.add(volcano);
-  }
-}
-
-function addStarfield() {
-  // Procedural stars for open space
+function addStarfieldEnhanced() {
+  // Dense beautiful starfield for zero-g level
   const starsGeometry = new THREE.BufferGeometry();
-  const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 });
+  const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.65, transparent: true, opacity: 0.95 });
   const starsVertices = [];
-  for (let i = 0; i < 10000; i++) {
-    const x = (Math.random() - 0.5) * 200;
-    const y = (Math.random() - 0.5) * 200;
-    const z = (Math.random() - 0.5) * 200;
+  for (let i = 0; i < 14000; i++) {
+    const x = (Math.random() - 0.5) * 210;
+    const y = (Math.random() - 0.5) * 210;
+    const z = (Math.random() - 0.5) * 210;
     starsVertices.push(x, y, z);
   }
   starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starsVertices, 3));
   const starField = new THREE.Points(starsGeometry, starsMaterial);
   starField.userData.isStarfield = true;
   scene.add(starField);
+  levelObjects.push(starField);
+}
+
+function addLevelAmbientParticles(level) {
+  // Kid-friendly sparkles / floating elements per theme
+  const pCount = (level === 5) ? 42 : (level === 4 || level === 7) ? 28 : 16;
+  for (let i=0; i < pCount; i++) {
+    let col = (level === 7) ? 0xffaa33 : (level === 5 ? 0xaabbff : 0xfde047);
+    const p = new THREE.Mesh(new THREE.SphereGeometry(0.06,5,4), new THREE.MeshBasicMaterial({color: col, transparent:true, opacity:0.7}));
+    const spread = (level === 5) ? 45 : 22;
+    p.position.set(Math.random()*spread - spread/2, 2 + Math.random()* (level===5?26:14), Math.random()*spread - spread/2);
+    p.userData = { life: 99, vel: new THREE.Vector3((Math.random()-0.5)*0.6, 0.3+Math.random()*0.6, (Math.random()-0.5)*0.6), type: 'ambient' };
+    if (level === 1) p.userData.vel.y = 0.1; // leaves gentle
+    scene.add(p);
+    coinParticles.push(p); // reuse system
+    levelObjects.push(p); // mark for cleanup
+  }
 }
 
 function spawnLevelCoins(level) {
-  // Different placements and challenges per level
+  // Rich unique positions per level + 2-4 SECRET hidden/bonus coins for full polish
+  // Each secret gives +250 and special popup. Hidden areas encourage exploration.
   let positions = [];
-  if (level === 0) { // Living Room - tight, furniture
-    positions = [[-8,2,6],[6,2,8],[-3,5,-4],[10,4,2],[2,8,7],[-6,3,10],[4,6,-6]];
-  } else if (level === 4) { // Moon - high floating, low grav
-    positions = [[-10,5,8],[12,12,5],[-2,20,-8],[15,8,12],[0,15,0],[-12,10,-5],[8,18,10]];
-  } else if (level === 5) { // Open Starfield - 3D floating
-    positions = [[-15,8,15],[10,5,-12],[0,18,8],[-8,12,-5],[12,10,0],[5,22,-10],[-5,6,12],[15,15,5]];
-  } else if (level === 6) { // Io - scattered, slippery high
-    positions = [[-15,4,15],[10,8,-10],[0,22,5],[-5,10,18],[14,15,-3],[-8,6, -12],[6,12,14]];
-  } else {
+  let secretIndices = []; // which in list are secrets
+
+  if (level === 0) { // Living Room cozy secrets: behind dresser, high shelf, under bed nook
     positions = [
-      [-12, 3, 10], [8, 3, 12], [-5, 8, -10], [15, 5, 0],
-      [0, 15, -5], [10, 10, 15], [-15, 6, 5], [5, 2, -12]
+      [-8,2.1,6],[7,2.3,8],[-3,5.5,-3.5],[10.5,4.2,1.8],[1.8,8.5,7.2],[-6.2,3.3,10.2],[4.5,6.5,-6.5],
+      // Secrets
+      [-10.5,1.6,-5.5], [2.5,7.8,-12.2], [-4,3.8,11.5]
     ];
+    secretIndices = [7,8,9];
+  } else if (level === 1) { // Backyard secrets behind trees + high fence
+    positions = [
+      [-11,3.2,-4],[9,4.5,10],[-1,9,-9],[12,6, -3],[3,2.5,14],[-7,7,1],[8,1.5,-13],
+      [-13.5,6.8,-8],[1,14,-16],[11,2.8, -15.5]
+    ];
+    secretIndices = [7,8,9];
+  } else if (level === 2) { // Playground high monkey bars + slide top secrets
+    positions = [
+      [-10,6,3],[7,3.5,-7],[0,12,-1],[-5,9,-9],[8,8,11],[3,4.5,2],[-1,2.5,13],
+      [5,11, -9],[ -9.5,8.5,6 ], [10,5.2, -5]
+    ];
+    secretIndices = [7,8,9];
+  } else if (level === 3) { // City high rooftops
+    positions = [
+      [-13,9,-13],[9,4,-10],[1,13,5],[-7,6,11],[13,8,-1],[-2,3, -14],[6,10,14],
+      [11,14,-12],[ -11,5, -3], [0,17, -7]
+    ];
+    secretIndices = [7,8,9];
+  } else if (level === 4) { // Moon high float + crater secrets
+    positions = [
+      [-11,5.5,8],[11,13,6],[-2,19,-7],[14,8.5,11],[0,15.5,-1],[-12,11,-6],[9,18,9],
+      [-15,7,14],[6,23,-13],[12,4, -15]
+    ];
+    secretIndices = [7,8,9];
+  } else if (level === 5) { // Starfield 3D hidden between debris + far
+    positions = [
+      [-16,8.5,14],[9,5.5,-11],[0.5,17.5,7],[-8.5,12.5,-4.5],[11,9.5,1],[4.5,21,-9],[-5,6.5,11],[14.5,14.5,6],
+      [-18,15,-18],[18,19, -6],[ -1,28,0],[7,-2,18] // more zero-g secrets
+    ];
+    secretIndices = [8,9,10,11];
+  } else if (level === 6) { // Mars dune + canyon secrets
+    positions = [
+      [-14,5,14],[9,9,-9],[-1,21,4],[-6,10.5,17],[13,15,-2],[-8,6.5,-11],[5,11.5,13],
+      [15,3,-14],[ -12,17,9 ],[2,4, -16]
+    ];
+    secretIndices = [7,8,9];
+  } else { // Io volcanic high peaks + geyser hidden
+    positions = [
+      [-14,5,14],[9,9,-9],[1,21,4],[-5,11,17],[13,15,-2],[-8,7,-11],[5,12,13],
+      [-2,25, -3],[16,8,11],[-10,4, -15]
+    ];
+    secretIndices = [7,8,9];
   }
-  const spread = (level >= 4) ? 1.6 : 1.0;
+
+  const spread = (level >= 4) ? 1.0 : 1.0;
   for (let i = 0; i < COIN_COUNT; i++) {
-    const p = positions[i % positions.length] || [Math.random()*20-10, 3+Math.random()*10, Math.random()*20-10];
+    const p = positions[i] || [Math.random()*24-12, 2 + Math.random()*12, Math.random()*24-12];
     const c = createCoinMesh();
-    c.position.set(p[0] * spread, p[1] * (level >=4 ? 1.4 : 1), p[2] * spread);
+    c.position.set(p[0] * spread, p[1], p[2] * spread);
     c.userData.baseY = c.position.y;
-    c.userData.isSecret = (level === 5 && i > 5); // secret in starfield for bonus
+    const isSec = secretIndices.includes(i);
+    c.userData.isSecret = isSec;
+    if (isSec) {
+      // make secret coins slightly different visually (bigger glow)
+      c.scale.set(1.15,1.15,1.15);
+      if (c.children[0]) c.children[0].material.emissive = new THREE.Color(0xfacc15);
+    }
     scene.add(c);
     coins.push(c);
   }
+
+  // Extra visual secret indicators (sparkle on secret coins occasionally via existing bob)
 }
 
 function spawnLevelPowerups(level) {
-  const puPos = [[-5,4,6], [12,5,-3], [0,12,8]];
-  puPos.forEach(([x,y,z]) => {
-    const p = createPowerupMesh();
+  // More powerups + variety: energy, magnet (pulls coins), surge (courage boost)
+  let puPos = [];
+  if (level === 0) puPos = [[-7.5,1.35,-1.5],[8.5,1.4,4],[1,5.9,-5.5],[5.5,3.7,7.5]];
+  else if (level === 5) puPos = [[-12,10,-11],[11,15,4],[-3,22,13],[13,8,-14]];
+  else puPos = [[-5,4.5,6],[11,5.5,-2],[0,11,7.5],[9,3.5,11]];
+
+  puPos.forEach(([x,y,z], idx) => {
+    const types = ['energy','energy','magnet','surge'];
+    const typ = types[idx % types.length];
+    const p = createPowerupMesh(typ);
     p.position.set(x, y, z);
     p.userData.baseY = y;
     scene.add(p);
@@ -1374,14 +1450,17 @@ function spawnLevelPowerups(level) {
 }
 
 function spawnNPCs(level) {
-  const count = (level < 4) ? 4 : 3;
+  const count = (level < 4) ? 5 : (level===5 ? 3 : 4);
   for (let i = 0; i < count; i++) {
     let npc, color;
-    const lvlName = LEVELS[level] ? LEVELS[level].name : '';
-    if (level >= 5) {
-      color = 0xdda0dd; // alien on Io/Mars
-      npc = new THREE.Mesh(new THREE.SphereGeometry(0.55 + Math.random()*0.1), new THREE.MeshLambertMaterial({color}));
-      npc.userData = { speed: 2 + Math.random(), phase: Math.random() * Math.PI*2, type: 'alien', bounce: Math.random() };
+    if (level >= 6) {
+      color = 0xffaacc;
+      npc = new THREE.Mesh(new THREE.SphereGeometry(0.5 + Math.random()*0.15), new THREE.MeshLambertMaterial({color}));
+      npc.userData = { speed: 1.6 + Math.random(), phase: Math.random() * Math.PI*2, type: 'ioalien', bounce: Math.random() };
+    } else if (level >= 5) {
+      color = 0xaabbff;
+      npc = new THREE.Mesh(new THREE.SphereGeometry(0.48 + Math.random()*0.1), new THREE.MeshLambertMaterial({color}));
+      npc.userData = { speed: 2.1 + Math.random(), phase: Math.random() * Math.PI*2, type: 'starfloat', bounce: Math.random() };
     } else if (level >= 3) {
       color = i%2 ? 0xffa500 : 0x4169e1;
       npc = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 0.7), new THREE.MeshLambertMaterial({color}));
@@ -1391,7 +1470,7 @@ function spawnNPCs(level) {
       npc = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.8), new THREE.MeshLambertMaterial({color}));
       npc.userData = { speed: 1.2 + Math.random(), phase: Math.random() * Math.PI*2, type: 'pal' };
     }
-    npc.position.set(-10 + i*4 + Math.random()*3, 1.5, 3 + Math.random()*10);
+    npc.position.set(-11 + i*4.2 + Math.random()*2.5, 1.55, 2.5 + Math.random()*11);
     scene.add(npc);
     npcs.push(npc);
   }
@@ -1405,34 +1484,38 @@ function updateNPCs(dt) {
     // Wander
     npc.position.x += Math.sin(ud.phase) * (ud.speed || 1.5) * dt * 0.8;
     npc.position.z += Math.cos(ud.phase * 1.3) * (ud.speed || 1.5) * dt * 0.6;
-    if (ud.type === 'alien') {
-      npc.position.y = 1.5 + Math.sin(ud.phase * 2) * 0.3; // float
+
+    if (ud.type === 'starfloat' || ud.type === 'ioalien') {
+      npc.position.y = 1.8 + Math.sin(ud.phase * 2.1) * (ud.type==='starfloat'?1.6:0.6); 
+      npc.rotation.y = ud.phase * 1.5;
+    } else if (ud.type === 'alien') {
+      npc.position.y = 1.5 + Math.sin(ud.phase * 2) * 0.3;
     }
 
-    // Funny interference
+    // Funny interference (playful, not harmful)
     const dist = npc.position.distanceTo(player.position);
-    if (dist < 2) {
+    if (dist < 2.1) {
       const pushX = (player.position.x - npc.position.x) / dist * 1.5;
       const pushZ = (player.position.z - npc.position.z) / dist * 1.5;
-      player.velocity.x += pushX * (ud.type === 'alien' ? 0.5 : 1);
-      player.velocity.z += pushZ * (ud.type === 'alien' ? 0.5 : 1);
-      if (Math.random() < 0.03) {
-        const msgs = ud.type === 'alien' ? ["Blorp!", "Zoop!", "Hi!"] : ["Hehe!", "Oops!", "Tag!", "Whee!"];
+      const pushFactor = (ud.type === 'starfloat' || ud.type === 'ioalien') ? 0.35 : (ud.type === 'alien' ? 0.55 : 1);
+      player.velocity.x += pushX * pushFactor;
+      player.velocity.z += pushZ * pushFactor;
+      if (Math.random() < 0.028) {
+        const msgs = (ud.type==='starfloat') ? ["Wheeee!", "Space hug!", "Zoom!"] : (ud.type==='ioalien'?["Gloop!", "Hot!", "Friend?"] : ["Hehe!", "Oops!", "Tag!", "Whee!"]);
         spawnCollectText(npc.position, msgs[Math.floor(Math.random()*msgs.length)]);
       }
-      // Annoying: temp steal a coin if any nearby
-      if (Math.random() < 0.005 && coins.length > 0) {
-        const nearCoin = coins.find(c => c.position.distanceTo(npc.position) < 3);
+      if (Math.random() < 0.004 && coins.length > 0) {
+        const nearCoin = coins.find(c => c.position.distanceTo(npc.position) < 3.5);
         if (nearCoin) {
-          nearCoin.position.copy(npc.position);
-          spawnCollectText(npc.position, "Mine!");
+          nearCoin.position.add(new THREE.Vector3((Math.random()-0.5)*1.5,0.8,(Math.random()-0.5)*1.5));
+          spawnCollectText(npc.position, "Bop!");
         }
       }
     }
     // bounds
     npc.position.x = Math.max(-ROOM.w/2 +2, Math.min(ROOM.w/2 -2, npc.position.x));
     npc.position.z = Math.max(-ROOM.d/2 +2, Math.min(ROOM.d/2 -2, npc.position.z));
-    if (npc.position.y < 0.5) npc.position.y = 0.5;
+    if (npc.position.y < 0.4) npc.position.y = 0.4;
   }
 }
 
@@ -1546,11 +1629,20 @@ function updateParticles(dt) {
     }
   }
   
-  // Coin collect particles
+  // Coin collect particles + ambient level sparkles (keep alive for polish)
   for (let i = coinParticles.length - 1; i >= 0; i--) {
     const p = coinParticles[i];
-    const ud = p.userData;
-    ud.life -= dt;
+    const ud = p.userData || {};
+    if (ud.type === 'ambient') {
+      // drift forever (level cleanup removes)
+      p.position.addScaledVector(ud.vel, dt * 0.7);
+      ud.vel.x *= 0.996; ud.vel.z *= 0.996;
+      // gentle bob
+      p.position.y += Math.sin(Date.now()/420 + i) * 0.004;
+      p.scale.setScalar(0.7 + Math.sin(Date.now()/300 + i)*0.3);
+      continue;
+    }
+    ud.life = (ud.life || 0.6) - dt;
     
     p.position.addScaledVector(ud.vel, dt);
     ud.vel.y -= 16 * dt;
@@ -1638,12 +1730,14 @@ function updatePlayer(dt) {
   if (wantJet && player.energy > 0) {
     // Special open space dynamics: no gravity, omnidirectional thrust, momentum based
     const isSpace = currentLevel === 5;
-    const thrustMult = isSpace ? 1.5 : 1;
+    const thrustMult = isSpace ? 1.65 : 1;
     if (isSpace) {
-      // Full 3D thrust in look direction + up
+      // Full 3D thrust in look direction + up + slight strafe
       const thrustDir = forward.clone().normalize();
-      player.velocity.addScaledVector(thrustDir, jetThrust * dt * thrustMult * 0.8);
-      player.velocity.y += jetThrust * dt * 0.5; // vertical too
+      player.velocity.addScaledVector(thrustDir, jetThrust * dt * thrustMult * 0.9);
+      player.velocity.y += jetThrust * dt * 0.65; 
+      // momentum feel: slight friction for drift fun
+      player.velocity.multiplyScalar(0.995);
     } else {
       // Apply strong upward thrust (overcomes gravity so you go high while fuel lasts)
       player.velocity.y += jetThrust * dt;
@@ -1816,9 +1910,9 @@ function setupInput() {
     }
     
     if (e.code === 'KeyE' && gameState === 'playing') {
-      // Talk to nearby NPC for funny hint
+      // Talk to nearby NPC for funny hint + reward (empowering & fun)
       let nearest = null;
-      let minDist = 3;
+      let minDist = 3.2;
       for (let npc of npcs) {
         const d = npc.position.distanceTo(player.position);
         if (d < minDist) {
@@ -1827,10 +1921,14 @@ function setupInput() {
         }
       }
       if (nearest) {
-        const hints = ["Keep rising!", "Coins float in space!", "Refuel often!", "Courage never ends!", "Fly free!"];
+        const ud = nearest.userData || {};
+        const hints = ud.type === 'starfloat' ? ["Zero-g is freedom!", "Drift to the stars!", "Collect in the void!"] :
+                      ud.type === 'ioalien' ? ["Lava is warm!", "Rise above!", "Bump me again!"] :
+                      ["Keep rising!", "Refuel your courage!", "Secrets are everywhere!", "Your cape is power!", "Friends help you rise!"];
         spawnCollectText(nearest.position, hints[Math.floor(Math.random()*hints.length)]);
-        // small energy boost as reward
-        player.energy = Math.min(1, player.energy + 0.1);
+        player.energy = Math.min(1, player.energy + 0.18);
+        score += 15; // tiny friendship bonus
+        updateHUD();
       }
     }
   });
@@ -1908,6 +2006,20 @@ function setupInput() {
     // quit to menu
     location.reload(); // simple reset
   });
+
+  // Add high scores button to pause for easy access
+  const pauseDiv = document.getElementById('pause-screen');
+  if (pauseDiv && !document.getElementById('pause-hs-btn')) {
+    const hsPause = document.createElement('button');
+    hsPause.id = 'pause-hs-btn';
+    hsPause.className = 'btn';
+    hsPause.style.background = '#334155';
+    hsPause.style.fontSize = '11px';
+    hsPause.textContent = 'VIEW HIGH SCORES';
+    hsPause.onclick = () => { if (gameState==='paused') togglePause(); showHighScoreTable(); };
+    pauseDiv.appendChild(document.createElement('br'));
+    pauseDiv.appendChild(hsPause);
+  }
   
   // Prevent space from scrolling
   window.addEventListener('keydown', (e) => {
@@ -2050,51 +2162,172 @@ function renderHeroPreview(charIndex, canvas) {
 }
 
 function setupLevelSelect() {
-  // Add simple level select to start screen for demo/full access (can enhance with unlocks later)
   const start = document.getElementById('start-screen');
   if (!start || document.getElementById('level-select')) return;
 
   const div = document.createElement('div');
   div.id = 'level-select';
-  div.style.margin = '10px 0';
+  div.style.margin = '8px 0 6px';
   const completed = beatenLevels.length;
-  div.innerHTML = `<div style="font-size:10px; color:#c0c0ff; margin-bottom:4px;">SELECT LEVEL (${completed}/8 completed):</div>`;
+  div.innerHTML = `<div style="font-size:9px; color:#c0c0ff; margin-bottom:3px; text-align:center;">WORLDS • ${completed}/8 RISEN</div>`;
+  div.style.display = 'grid';
+  div.style.gridTemplateColumns = 'repeat(4, 1fr)';
+  div.style.gap = '4px';
 
   LEVELS.forEach((lvl, idx) => {
-    const b = document.createElement('button');
-    b.textContent = lvl.name;
-    b.className = 'btn';
-    b.style.padding = '4px 8px';
-    b.style.fontSize = '8px';
-    b.style.margin = '2px';
+    const card = document.createElement('div');
+    card.style.background = 'rgba(20,20,50,0.7)';
+    card.style.border = '2px solid #64748b';
+    card.style.padding = '3px';
+    card.style.fontSize = '7px';
+    card.style.cursor = 'pointer';
+    card.style.textAlign = 'center';
+    card.style.borderRadius = '2px';
+
     const unlocked = idx === 0 || beatenLevels.includes(idx - 1);
-    if (!unlocked) {
-      b.style.opacity = '0.5';
-      b.disabled = true;
-      b.textContent += ' (locked)';
-    } else {
-      const high = JSON.parse(localStorage.getItem(`joshway_high_${idx}`) || '{}');
-      if (high.score) b.textContent += ` ★${high.score}`;
+    const high = JSON.parse(localStorage.getItem(`joshway_high_${idx}`) || '{}');
+
+    // Mini preview canvas (3D snapshot of world theme)
+    const prevCanvas = document.createElement('canvas');
+    prevCanvas.width = 58; prevCanvas.height = 42;
+    prevCanvas.style.border = '1px solid #fff';
+    prevCanvas.style.display = 'block';
+    prevCanvas.style.margin = '0 auto 1px';
+    card.appendChild(prevCanvas);
+
+    const nameDiv = document.createElement('div');
+    nameDiv.textContent = lvl.name.toUpperCase().slice(0,13);
+    nameDiv.style.color = unlocked ? '#f5d742' : '#64748b';
+    nameDiv.style.fontSize = '6px';
+    card.appendChild(nameDiv);
+
+    if (unlocked && high.score) {
+      const hs = document.createElement('div');
+      hs.textContent = `★${high.score} ${high.time||'--'}s`;
+      hs.style.fontSize = '6px'; hs.style.color = '#4ade80';
+      card.appendChild(hs);
+    } else if (!unlocked) {
+      nameDiv.textContent += ' 🔒';
     }
-    b.onclick = () => {
+
+    // Render quick themed preview
+    renderLevelPreview(idx, prevCanvas);
+
+    card.onclick = () => {
       if (unlocked) {
         currentLevel = idx;
-        // Update visual selection
-        div.querySelectorAll('button').forEach(bb => bb.style.background = '#334155');
-        b.style.background = '#4ade80';
+        // highlight
+        div.querySelectorAll('div').forEach(c => c.style.border = '2px solid #64748b');
+        card.style.border = '2px solid #4ade80';
+      } else {
+        spawnCollectText({x:0,y:0,z:0}, 'COMPLETE PREVIOUS TO UNLOCK!');
       }
     };
-    if (idx === 0) b.style.background = '#4ade80';
-    div.appendChild(b);
+    if (idx === 0) card.style.border = '2px solid #4ade80';
+
+    div.appendChild(card);
   });
 
-  // Insert after char select
   const charDiv = document.getElementById('char-select');
   if (charDiv && charDiv.parentNode) {
     charDiv.parentNode.insertBefore(div, charDiv.nextSibling);
   } else {
     start.appendChild(div);
   }
+
+  // Add high scores button + full table launcher
+  addHighScoreButton(start);
+}
+
+function renderLevelPreview(lvlIdx, canvas) {
+  // Lightweight 3D preview - simple themed geometry per world
+  const pScene = new THREE.Scene();
+  const pCam = new THREE.PerspectiveCamera(52, canvas.width/canvas.height, 0.5, 60);
+  const pRend = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true, preserveDrawingBuffer:true});
+  pRend.setSize(canvas.width, canvas.height);
+
+  const hemi = new THREE.HemisphereLight(0xffffff,0x334455,0.9);
+  pScene.add(hemi);
+
+  const sky = LEVELS[lvlIdx].sky || 0x87ceeb;
+  // Floor themed
+  const fl = new THREE.Mesh(new THREE.PlaneGeometry(18,18), new THREE.MeshLambertMaterial({color: LEVELS[lvlIdx].ground || 0x4ade80}));
+  fl.rotation.x = -1.57; fl.position.y = -0.5; pScene.add(fl);
+
+  // World specific iconic elements
+  if (lvlIdx === 0) {
+    const d = new THREE.Mesh(new THREE.BoxGeometry(4,1.5,2), new THREE.MeshLambertMaterial({color:0xc0267a})); d.position.set(1,0.5,-1); pScene.add(d);
+    const b = new THREE.Mesh(new THREE.BoxGeometry(3,0.8,4), new THREE.MeshLambertMaterial({color:0x1e3a8a})); b.position.set(-2,0.2,2); pScene.add(b);
+  } else if (lvlIdx === 1) {
+    const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.7,1,3,5), new THREE.MeshLambertMaterial({color:0x228b22})); tr.position.set(-2,1,1); pScene.add(tr);
+  } else if (lvlIdx === 4) {
+    const cr = new THREE.Mesh(new THREE.CylinderGeometry(2.5,2.5,0.3,10), new THREE.MeshLambertMaterial({color:0x666})); cr.position.set(2, -0.2, -1); pScene.add(cr);
+  } else if (lvlIdx === 5) {
+    pScene.fog = new THREE.Fog(0x000011,1,30);
+    const st = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([ -3,2,0, 3,4,-1,0,3,2 ],3)), new THREE.PointsMaterial({color:0xffffff,size:1.5}));
+    pScene.add(st);
+  } else if (lvlIdx === 7) {
+    const v = new THREE.Mesh(new THREE.ConeGeometry(1.8,3,6), new THREE.MeshLambertMaterial({color:0x8b0000})); v.position.set(0,0.5,0); pScene.add(v);
+  } else {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshLambertMaterial({color:0xfde047})); s.position.set(0,2,-2); pScene.add(s);
+  }
+
+  pCam.position.set(0, 4.5, 11);
+  pCam.lookAt(0,1,0);
+  pRend.render(pScene, pCam);
+  pRend.dispose();
+}
+
+function addHighScoreButton(container) {
+  if (document.getElementById('highscores-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'highscores-btn';
+  btn.className = 'btn';
+  btn.style.fontSize = '10px';
+  btn.style.padding = '6px 16px';
+  btn.style.marginTop = '4px';
+  btn.style.background = '#334155';
+  btn.textContent = 'HIGH SCORE TABLE';
+  btn.onclick = showHighScoreTable;
+  container.appendChild(btn);
+}
+
+function showHighScoreTable() {
+  // Create or show modal high score table - retro styled, per level + overall
+  let modal = document.getElementById('hs-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'hs-modal';
+    modal.className = 'panel retro-text';
+    modal.style.position = 'absolute';
+    modal.style.top = '12%';
+    modal.style.left = '50%';
+    modal.style.transform = 'translateX(-50%)';
+    modal.style.zIndex = '300';
+    modal.style.padding = '18px 26px';
+    modal.style.maxWidth = '580px';
+    modal.style.maxHeight = '70vh';
+    modal.style.overflow = 'auto';
+    document.body.appendChild(modal);
+  }
+  let html = `<h2 style="color:#f5d742;font-size:22px;margin-bottom:10px">JOSHWAY HIGH SCORES</h2>`;
+  html += `<div style="font-size:10px;margin-bottom:12px;color:#c0c0ff">YOUR COURAGE ACROSS THE WORLDS • INSPIRED BY MAGGIE ISAMOYER</div>`;
+  html += `<table style="width:100%;font-size:10px;border-collapse:collapse;color:#fff"><tr style="background:#1e3a8a"><th style="padding:3px;text-align:left">WORLD</th><th>BEST SCORE</th><th>BEST TIME</th><th>STATUS</th></tr>`;
+  let totalScore = 0, totalTime = 0, completed = 0;
+  LEVELS.forEach((l, i) => {
+    const h = JSON.parse(localStorage.getItem(`joshway_high_${i}`) || '{}');
+    const beat = beatenLevels.includes(i);
+    if (beat) { completed++; totalScore += h.score || 0; totalTime += h.time || 0; }
+    const sc = h.score ? String(h.score).padStart(5,'0') : '-----';
+    const tm = h.time ? h.time.toFixed(1) + 's' : '--:--';
+    const st = beat ? 'RISEN ✓' : 'LOCKED';
+    html += `<tr style="border-bottom:1px solid #475569"><td>${l.name}</td><td style="color:#facc15">${sc}</td><td style="color:#4ade80">${tm}</td><td style="font-size:9px;${beat?'color:#4ade80':''}">${st}</td></tr>`;
+  });
+  html += `</table>`;
+  html += `<div style="margin-top:10px;font-size:11px;color:#f5d742">TOTAL BEST: ${totalScore} • ${completed}/8 WORLDS RISEN</div>`;
+  html += `<button class="btn" style="margin-top:12px;background:#475569" onclick="document.getElementById('hs-modal').style.display='none'">CLOSE</button>`;
+  modal.innerHTML = html;
+  modal.style.display = 'block';
 }
 
 // ============== GAME FLOW ==============
@@ -2128,6 +2361,7 @@ function startGame() {
   startTime = performance.now();
   levelStartTime = performance.now();
   coinsCollected = 0;
+  bonusCoinsCollected = 0;
   score = 0;
   player.energy = 1.0;
   player.position.set(0, 1.8, 18); // start lower in the vast space, adjusted for huge room
@@ -2194,7 +2428,7 @@ function endGame() {
   
   const isLastLevel = currentLevel === LEVELS.length - 1;
   
-  document.getElementById('final-coins').textContent = `${COIN_COUNT} / ${COIN_COUNT}`;
+  document.getElementById('final-coins').textContent = `${COIN_COUNT} / ${COIN_COUNT} ${bonusCoinsCollected ? `(+${bonusCoinsCollected} SECRETS)` : ''}`;
   document.getElementById('win-message').textContent = isLastLevel 
     ? "CONGRATULATIONS! YOU HAVE THE COURAGE TO RISE!" 
     : "YOU GATHERED EVERY COURAGE STAR";
@@ -2202,9 +2436,10 @@ function endGame() {
   gameTime = ((performance.now() - startTime) / 1000).toFixed(1);
   document.getElementById('final-time').textContent = `${gameTime}s`;
   
-  // Calculate final score with time bonus
-  const timeBonus = Math.max(0, 300 - Math.floor(gameTime)) * 10;
-  const finalScore = score + timeBonus;
+  // Calculate final score with time bonus + secret bonus
+  const timeBonus = Math.max(0, 420 - Math.floor(gameTime)) * 12;
+  const secretBonus = (bonusCoinsCollected || 0) * 120;
+  const finalScore = score + timeBonus + secretBonus;
   const scoreEl = document.getElementById('final-score');
   if (scoreEl) scoreEl.textContent = String(finalScore).padStart(4, '0');
   
@@ -2231,7 +2466,32 @@ function endGame() {
   if (nextBtn) {
     if (isLastLevel) {
       nextBtn.style.display = 'none';
-      if (endCredits) endCredits.style.display = 'block';
+      if (endCredits) {
+        // ENHANCED FULL STORY + CREDITS for production end game
+        endCredits.style.display = 'block';
+        endCredits.style.fontSize = '8px';
+        endCredits.style.opacity = '0.95';
+        endCredits.style.lineHeight = '1.45';
+        endCredits.style.textAlign = 'left';
+        endCredits.style.maxWidth = '460px';
+        endCredits.style.margin = '14px auto 0';
+        endCredits.innerHTML = `
+          <strong style="color:#facc15">THE FULL JOSHWAY STORY</strong><br><br>
+          From the cozy Living Room where courage first sparked, Joshway rose through the Backyard winds and Playground dreams.<br>
+          Through the City lights, the low-gravity Moon, and the boundless Open Starfield (zero-g flight!), to the red dunes of Mars and the fiery geysers of Io.<br>
+          Every secret Star Coin collected proved: with cape, friends, and heart — you can always RISE.<br><br>
+          <strong>INSPIRED BY ARTIST MAGGIE ISAMOYER'S</strong><br>
+          beautiful illustrations for "Joshway and the Courage to Rise"<br>
+          Warm empowering kid-friendly adventures full of friendship & light.<br><br>
+          <strong>CREDITS</strong><br>
+          Game Design & Code — Joshway Team • Three.js + Vite web magic<br>
+          Hero & World Art Direction — Maggie Isamoyer (book illustrations)<br>
+          Chiptune Music & SFX — Pure Web Audio nostalgia<br>
+          Special Thanks — Every brave kid who holds SPACE to rise<br>
+          Play again to collect all secrets & beat your times!<br><br>
+          <span style="color:#4ade80">JOSHWAY: COURAGE TO RISE — COMPLETE!</span>
+        `;
+      }
     } else {
       nextBtn.style.display = 'inline-block';
       nextBtn.onclick = () => {
@@ -2254,7 +2514,12 @@ function endGame() {
     const i = document.getElementById('instructions');
     if (i) i.style.display = 'block';
   };
-  if (levelSelectBtn) levelSelectBtn.onclick = () => location.reload(); // simple for now
+  if (levelSelectBtn) levelSelectBtn.onclick = () => {
+    // Enhanced: show high scores table first for full production end flow
+    win.style.display = 'none';
+    showHighScoreTable();
+    setTimeout(() => { if (confirm('Return to main menu?')) location.reload(); }, 650);
+  };
   
   // Unlock pointer
   if (isPointerLocked) document.exitPointerLock();
@@ -2286,7 +2551,6 @@ function restartGame() {
   powerups.forEach(p => scene.remove(p));
   powerups.length = 0;
   
-  spawnCoins();
   if (hazard) hazard.position.set(2, 0.4, 2);
   
   switchLevel(0);
@@ -2409,9 +2673,8 @@ async function init() {
   purple2.position.set(4, 5, -4);
   scene.add(purple2);
   
-  // Build base + first level
-  buildWorld(); // base room structure
-  switchLevel(0); // start in Living Room, will populate coins/NPCs/music/props
+  // First level - will build full themed world via switch
+  switchLevel(0); // start in Living Room, will populate coins/NPCs/music/props via buildLevelWorld
   
   // Character selection UI
   setupCharacterSelect();
