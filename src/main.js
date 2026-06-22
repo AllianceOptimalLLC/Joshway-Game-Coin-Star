@@ -685,15 +685,15 @@ function resolvePlayerCollision() {
     const diff = p.clone().sub(closest);
     const dist2 = diff.x*diff.x + diff.z*diff.z;
     
-    // Side push (improved tolerance)
+    // Side push (improved tolerance + space friendly)
     const yOverlap = (p.y + player.height * 0.65 > box.min.y) && (p.y < box.max.y + 0.15);
     if (dist2 < r*r && yOverlap) {
       const dist = Math.sqrt(dist2) || 0.0001;
-      const push = (r - dist) * 1.08;
+      const push = (r - dist) * (currentLevel === 5 ? 0.6 : 1.08); // gentler in space
       p.x += (diff.x / dist) * push;
       p.z += (diff.z / dist) * push;
-      player.velocity.x *= 0.55;
-      player.velocity.z *= 0.55;
+      player.velocity.x *= (currentLevel === 5 ? 0.8 : 0.55);
+      player.velocity.z *= (currentLevel === 5 ? 0.8 : 0.55);
       collided = true;
     }
     
@@ -1199,6 +1199,12 @@ function updatePowerups(dt) {
         score += 80;
         spawnCollectText(p.position, 'COURAGE SURGE!');
         playTone(880,0.18,'sine',0.35);
+      } else if (typ === 'boost') {
+        activePowerupEffects.boost = performance.now() + 8200;
+        player.energy = Math.min(1, player.energy + 0.65);
+        score += 65;
+        spawnCollectText(p.position, 'SPEED BOOST!');
+        playTone(720,0.12,'sawtooth',0.32);
       } else {
         player.energy = Math.min(1, player.energy + 0.52);
         playTone(620, 0.1, 'sine', 0.25, 80);
@@ -1223,6 +1229,14 @@ function updatePowerups(dt) {
   if (activePowerupEffects.surge && performance.now() < activePowerupEffects.surge) {
     // Small extra lift during surge
     if (player.jetActive) player.velocity.y += 4 * dt;
+  }
+  if (activePowerupEffects.boost && performance.now() < activePowerupEffects.boost) {
+    // New extra powerup: speed boost, forward momentum + better control
+    const boostDir = new THREE.Vector3(0,0,-1).applyAxisAngle(new THREE.Vector3(0,1,0), player.rotationY);
+    player.velocity.addScaledVector(boostDir, 11 * dt);
+    player.velocity.x *= 1.02;
+    player.velocity.z *= 1.02;
+    if (player.jetActive) player.velocity.y += 2.5 * dt;
   }
 }
 
@@ -1465,14 +1479,14 @@ function spawnLevelCoins(level) {
 }
 
 function spawnLevelPowerups(level) {
-  // More powerups + variety: energy, magnet (pulls coins), surge (courage boost)
+  // More powerups + variety: energy, magnet (pulls coins), surge (courage boost), boost (speed!)
   let puPos = [];
-  if (level === 0) puPos = [[-7.5,1.35,-1.5],[8.5,1.4,4],[1,5.9,-5.5],[5.5,3.7,7.5]];
-  else if (level === 5) puPos = [[-12,10,-11],[11,15,4],[-3,22,13],[13,8,-14]];
-  else puPos = [[-5,4.5,6],[11,5.5,-2],[0,11,7.5],[9,3.5,11]];
+  if (level === 0) puPos = [[-7.5,1.35,-1.5],[8.5,1.4,4],[1,5.9,-5.5],[5.5,3.7,7.5],[ -2,7.5, -4]];
+  else if (level === 5) puPos = [[-12,10,-11],[11,15,4],[-3,22,13],[13,8,-14],[2,26,2]];
+  else puPos = [[-5,4.5,6],[11,5.5,-2],[0,11,7.5],[9,3.5,11], [ -10,9,8]];
 
   puPos.forEach(([x,y,z], idx) => {
-    const types = ['energy','energy','magnet','surge'];
+    const types = ['energy','energy','magnet','surge','boost']; // extra powerup type
     const typ = types[idx % types.length];
     const p = createPowerupMesh(typ);
     p.position.set(x, y, z);
@@ -1865,6 +1879,8 @@ function updatePlayer(dt) {
   }
   if (isSpaceLevel) {
     player.onGround = false; // always "flying" in space
+    // subtle auto stabilize slow drift in space
+    player.velocity.multiplyScalar(0.999);
   }
 
   // Sound effects for landing / jet transitions
@@ -2382,7 +2398,7 @@ function setupLevelSelect() {
 }
 
 function renderLevelPreview(lvlIdx, canvas) {
-  // Lightweight 3D preview - simple themed geometry per world
+  // Lightweight 3D preview - simple themed geometry per world. Enhanced for correct display + more detail.
   const pScene = new THREE.Scene();
   const pCam = new THREE.PerspectiveCamera(52, canvas.width/canvas.height, 0.5, 60);
   const pRend = new THREE.WebGLRenderer({canvas, alpha:true, antialias:true, preserveDrawingBuffer:true});
@@ -2391,25 +2407,36 @@ function renderLevelPreview(lvlIdx, canvas) {
   const hemi = new THREE.HemisphereLight(0xffffff,0x334455,0.9);
   pScene.add(hemi);
 
-  const sky = LEVELS[lvlIdx].sky || 0x87ceeb;
   // Floor themed
   const fl = new THREE.Mesh(new THREE.PlaneGeometry(18,18), new THREE.MeshLambertMaterial({color: LEVELS[lvlIdx].ground || 0x4ade80}));
   fl.rotation.x = -1.57; fl.position.y = -0.5; pScene.add(fl);
 
-  // World specific iconic elements
-  if (lvlIdx === 0) {
+  // World specific iconic elements - more representative
+  if (lvlIdx === 0) { // living room
     const d = new THREE.Mesh(new THREE.BoxGeometry(4,1.5,2), new THREE.MeshLambertMaterial({color:0xc0267a})); d.position.set(1,0.5,-1); pScene.add(d);
     const b = new THREE.Mesh(new THREE.BoxGeometry(3,0.8,4), new THREE.MeshLambertMaterial({color:0x1e3a8a})); b.position.set(-2,0.2,2); pScene.add(b);
-  } else if (lvlIdx === 1) {
+    const sm = new THREE.Mesh(new THREE.SphereGeometry(0.6), new THREE.MeshLambertMaterial({color:0xfde047})); sm.position.set(3,1.5,3); pScene.add(sm);
+  } else if (lvlIdx === 1) { // backyard
     const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.7,1,3,5), new THREE.MeshLambertMaterial({color:0x228b22})); tr.position.set(-2,1,1); pScene.add(tr);
+    const tr2 = tr.clone(); tr2.position.set(2.5,1.2,-1.5); pScene.add(tr2);
+  } else if (lvlIdx === 2) {
+    const pl = new THREE.Mesh(new THREE.BoxGeometry(2.5,0.4,2), new THREE.MeshLambertMaterial({color:0x3b82f6})); pl.position.set(0,1.5,0); pScene.add(pl);
+  } else if (lvlIdx === 3) {
+    const bd = new THREE.Mesh(new THREE.BoxGeometry(2,2.5,1.8), new THREE.MeshLambertMaterial({color:0x222233})); bd.position.set(-1,1.3,-2); pScene.add(bd);
+    const lt = new THREE.Mesh(new THREE.SphereGeometry(0.3), new THREE.MeshLambertMaterial({color:0xffee99})); lt.position.set(1.5,2.5,-1); pScene.add(lt);
   } else if (lvlIdx === 4) {
     const cr = new THREE.Mesh(new THREE.CylinderGeometry(2.5,2.5,0.3,10), new THREE.MeshLambertMaterial({color:0x666})); cr.position.set(2, -0.2, -1); pScene.add(cr);
+    const flg = new THREE.Mesh(new THREE.PlaneGeometry(1,0.6), new THREE.MeshLambertMaterial({color:0xffffff})); flg.position.set(-1.5,1.5,1); pScene.add(flg);
   } else if (lvlIdx === 5) {
     pScene.fog = new THREE.Fog(0x000011,1,30);
-    const st = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([ -3,2,0, 3,4,-1,0,3,2 ],3)), new THREE.PointsMaterial({color:0xffffff,size:1.5}));
+    const st = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([ -3,2,0, 3,4,-1,0,3,2, -2,5,-3 ],3)), new THREE.PointsMaterial({color:0xffffff,size:1.5}));
     pScene.add(st);
+    const ast = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9), new THREE.MeshLambertMaterial({color:0x555566})); ast.position.set(1,2,-2); pScene.add(ast);
+  } else if (lvlIdx === 6) {
+    const r = new THREE.Mesh(new THREE.DodecahedronGeometry(1.5), new THREE.MeshLambertMaterial({color:0x992222})); r.position.set(-1,0.8,1); pScene.add(r);
   } else if (lvlIdx === 7) {
     const v = new THREE.Mesh(new THREE.ConeGeometry(1.8,3,6), new THREE.MeshLambertMaterial({color:0x8b0000})); v.position.set(0,0.5,0); pScene.add(v);
+    const l = new THREE.Mesh(new THREE.SphereGeometry(0.4), new THREE.MeshLambertMaterial({color:0xff6600})); l.position.set(1.2,1.8,1); pScene.add(l);
   } else {
     const s = new THREE.Mesh(new THREE.SphereGeometry(0.8), new THREE.MeshLambertMaterial({color:0xfde047})); s.position.set(0,2,-2); pScene.add(s);
   }
@@ -2484,8 +2511,10 @@ function startGame() {
   if (typeof currentLevel === 'undefined' || currentLevel < 0) currentLevel = 0;
   if (typeof selectedLevel === 'number' && selectedLevel >= 0) {
     // if user used cards or play button, prefer it (already synced usually)
-    if (currentLevel !== selectedLevel) currentLevel = selectedLevel;
+    const selUnlocked = (selectedLevel === 0 || beatenLevels.includes(selectedLevel - 1));
+    if (selUnlocked) currentLevel = selectedLevel;
   }
+  selectedLevel = currentLevel; // keep in sync for re-entrancy
   if (playerGroup) {
     scene.remove(playerGroup);
     playerGroup = null;
@@ -2652,15 +2681,27 @@ function endGame() {
       };
     }
   }
-  if (replayBtn) replayBtn.onclick = () => {
-    win.style.display = 'none';
-    switchLevel(currentLevel);
-    gameState = 'playing';
-    const h = document.getElementById('hud');
-    if (h) h.style.display = 'flex';
-    const i = document.getElementById('instructions');
-    if (i) i.style.display = 'block';
-  };
+  if (replayBtn) {
+    if (isLastLevel) replayBtn.textContent = 'PLAY FULL ADVENTURE AGAIN';
+    replayBtn.onclick = () => {
+      win.style.display = 'none';
+      const isLast = currentLevel === LEVELS.length - 1;
+      if (isLast) {
+        // Full restart for complete adventure polish
+        currentLevel = 0;
+        selectedLevel = 0;
+        beatenLevels = JSON.parse(localStorage.getItem('joshway_beaten') || '[]'); // keep unlocks
+        switchLevel(0);
+      } else {
+        switchLevel(currentLevel);
+      }
+      gameState = 'playing';
+      const h = document.getElementById('hud');
+      if (h) h.style.display = 'flex';
+      const i = document.getElementById('instructions');
+      if (i) i.style.display = 'block';
+    };
+  }
   if (levelSelectBtn) levelSelectBtn.onclick = () => {
     // Better production flow: return to polished start menu + level select, no full reload
     win.style.display = 'none';
@@ -2736,7 +2777,8 @@ function restartGame() {
   player.jetActive = false;
   prevOnGround = true;
   jetActiveLast = false;
-  currentLevel = 0; // restart adventure from beginning for full game feel
+  currentLevel = 0;
+  selectedLevel = 0; // restart adventure from beginning for full game feel
   
   coinsCollected = 0;
   mouseX = 0;

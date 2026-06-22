@@ -17,6 +17,14 @@ Worlds:
 Deployed at: https://joshway-starcoins.vercel.app
 (Production Vercel project under AllianceOptimalLLC team: joshway-starcoins. Standalone deployment at root. For joshway.app/starcoins slug integration: add rewrites in the main project's vercel.json or use subdomain alias like starcoins.joshway.app.)
 
+**Latest Production Deploy:** https://joshway-starcoins.vercel.app (via `vercel --prod --yes --scope allianceoptimal`)
+
+Full Joshway Collection Live:
+- Star Coins 3D: https://joshway-starcoins.vercel.app
+- Pinball: https://joshway-pinball.vercel.app
+- Speed: https://joshway-speed.vercel.app
+- Flash Odyssey: https://joshway-flash-odyssey.vercel.app
+
 GitHub: https://github.com/AllianceOptimalLLC/Joshway-Game-Coin-Star
 
 Each world has its own unique chiptune music, coin challenges, gravity, and funny CPU pals (kids, toys, aliens) that bump, distract, and entertain without harming you.
@@ -32,23 +40,31 @@ Inspired by Maggie Isamoyer's gorgeous illustrations for the Joshway books.
 The game world translates the book' s playgrounds, glowing courage light, friendship, and "rise" motif into an interactive 3D experience.
 
 ## Features
-- Fully 3D retro-inspired bedroom environment (blue starry walls, pink desk, bunk bed, dresser, wooden furniture)
-- Original hero: **Captain Nova** — toy space ranger with jetpack and wings (heavily inspired by the reference video style)
-- Smooth third-person controls with pointer lock
-- Double jump + sustained jetpack flight with particle thrusters and limited energy meter
-- 15 collectible spinning gold Star Coins scattered around the room
-- Procedural wood and star wall textures
-- Retro pixel UI with rich sound effects + original chiptune background music (pure Web Audio, toggle with M key or button)
-- Win screen with time tracking
+- Fully 3D retro-inspired multi-world adventure: 8 themed worlds (Living Room to Volcanic Io)
+- Original hero Joshway + friends (4 selectable with live 3D cape previews)
+- Smooth third-person controls with pointer lock, double jump + HOLD SPACE cape rise (energy meter + refuels)
+- 12 required Star Coins + 3+ SECRET bonus coins per world (isSecret, extra score, drifting in zero-g)
+- Level select with 4x2 grid, mini 3D world previews, highscores (incl. secrets), unlock progression, PLAY SELECTED button
+- Unique chiptune music per level, funny interactive NPCs (E to talk + bump), powerups (Energy/Magnet/Surge/Boost)
+- Procedural textures, particles, portals, win/score/highscore save (localStorage), pause, full credits on completion
+- Retro pixel UI, special zero-g Starfield momentum flight
+- Win screen with time + bests + full story/credits for last world
 
 ## Controls
-- **Click** the game to lock mouse cursor
-- **WASD** / Arrow keys — Move
-- **Space** — Jump. Press again in the air for a double-jump + jet boost
-- **Hold Space** (while airborne) — Keep thrusting with the jetpack
-- **Mouse** — Freely look around
-- **ESC** — Release mouse cursor
-- **R** (on win screen) — Replay
+- **Click** the game to lock mouse cursor (pointer lock for full look)
+- **WASD** / Arrow keys — Move (A/D strafe correctly)
+- **Space** — Jump. Press again in the air for a double-jump + jet boost. **HOLD SPACE** to continuously RISE with your cape (uses courage/energy)
+- **Hold Space** (while airborne) — Keep thrusting with the jetpack/cape. Refuel at orbs to climb higher!
+- **Mouse** — Freely look around (full 3D)
+- **E** — Talk to funny NPC pals (nearby) for hints + small courage refill. They bump playfully!
+- **M** — Toggle chiptune music
+- **ESC** — Release mouse cursor / PAUSE
+- **R** or **P** (on win screen) — Replay
+- **LEVEL SELECT** on win/pause: pick any unlocked world with 3D previews + high scores. Click cards then PLAY SELECTED WORLD (or main BEGIN)
+
+Special: Zero-g Starfield uses momentum-based full 3D thrust. Secrets drift. Power-ups: Energy, Magnet, Surge, Boost! 
+
+8 worlds progression: complete all 12 coins (find 3+ secret bonus stars per world) to unlock next portal by RISING into it.
 
 ## Run Locally
 
