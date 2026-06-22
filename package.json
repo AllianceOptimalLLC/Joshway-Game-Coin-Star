@@ -1,0 +1,17 @@
+{
+  "name": "playstalgiax",
+  "version": "1.0.0",
+  "description": "Joshway: Courage to Rise - Multi-world 3D Star Coin Adventure. Collect coins, rise with your cape across living room to Jupiter's moon Io. Unique music & funny CPU pals per world!",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.175.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Joshway: Courage to Rise</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&amp;display=swap');
+    
+    :root {
+      --retro-yellow: #f5d742;
+      --retro-purple: #8c3cc8;
+      --retro-green: #4ade80;
+      --retro-blue: #1e3a8a;
+    }
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #0a0a1a;
+      font-family: "Press Start 2P", system-ui, monospace;
+      color: #fff;
+      image-rendering: pixelated;
+    }
+    
+    #game-canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+    
+    /* Retro UI */
+    .ui-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+    }
+    
+    .panel {
+      pointer-events: auto;
+      background: rgba(10, 10, 30, 0.92);
+      border: 4px solid var(--retro-yellow);
+      box-shadow: 0 0 0 4px #000, 0 0 0 8px var(--retro-purple);
+    }
+    
+    .retro-text {
+      font-family: "Press Start 2P", monospace;
+      text-shadow: 3px 3px 0 #000;
+      image-rendering: pixelated;
+    }
+    
+    #start-screen {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      padding: 40px 60px;
+      max-width: 620px;
+    }
+    
+    #start-screen h1 {
+      font-size: 48px;
+      color: var(--retro-yellow);
+      letter-spacing: 4px;
+      margin-bottom: 8px;
+      text-shadow: 4px 4px 0 #000;
+    }
+    
+    #start-screen .subtitle {
+      font-size: 14px;
+      color: #a5b4fc;
+      margin-bottom: 28px;
+      letter-spacing: 2px;
+    }
+    
+    .btn {
+      display: inline-block;
+      background: var(--retro-purple);
+      color: #fff;
+      border: 4px solid #fff;
+      padding: 14px 38px;
+      font-family: "Press Start 2P", monospace;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 8px;
+      text-transform: uppercase;
+      box-shadow: 4px 4px 0 #000;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    
+    .btn:hover {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0 #000;
+    }
+    
+    .btn:active {
+      transform: translate(4px, 4px);
+      box-shadow: 0 0 0 #000;
+    }
+    
+    #hud {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      font-size: 14px;
+    }
+    
+    .hud-left, .hud-right {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .hud-item {
+      background: rgba(0,0,0,0.75);
+      border: 3px solid var(--retro-yellow);
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 140px;
+    }
+
+    .music-btn {
+      background: rgba(0,0,0,0.75);
+      border: 3px solid var(--retro-yellow);
+      padding: 6px 12px;
+      font-family: "Press Start 2P", monospace;
+      font-size: 11px;
+      color: #f5d742;
+      cursor: pointer;
+      user-select: none;
+      min-width: auto;
+    }
+    .music-btn.off {
+      color: #64748b;
+      border-color: #475569;
+    }
+    
+    .hud-label {
+      color: #f5d742;
+      font-size: 11px;
+    }
+    
+    .hud-value {
+      font-size: 20px;
+      color: #fff;
+      font-weight: bold;
+    }
+    
+    .coin-icon {
+      width: 22px;
+      height: 22px;
+      background: #facc15;
+      border: 2px solid #854d0e;
+      border-radius: 50%;
+      position: relative;
+    }
+    
+    .coin-icon:after {
+      content: '★';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #854d0e;
+      font-size: 12px;
+    }
+    
+    #energy-bar {
+      width: 160px;
+      height: 16px;
+      background: #222;
+      border: 3px solid #4ade80;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    #energy-fill {
+      height: 100%;
+      background: linear-gradient(to right, #4ade80, #86efac);
+      width: 100%;
+      transition: width 0.1s linear;
+    }
+    
+    #instructions {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      border: 3px solid #64748b;
+      padding: 10px 18px;
+      font-size: 10px;
+      color: #cbd5e1;
+      text-align: center;
+      max-width: 520px;
+      line-height: 1.5;
+    }
+    
+    #win-screen {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      padding: 48px 60px;
+      max-width: 520px;
+    }
+    
+    #win-screen h2 {
+      font-size: 32px;
+      color: var(--retro-green);
+      margin-bottom: 16px;
+    }
+    
+    .stat {
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    
+    .crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 8px;
+      height: 8px;
+      border: 2px solid rgba(245, 215, 66, 0.6);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 50;
+      display: none;
+    }
+    
+    .collect-popup {
+      position: absolute;
+      color: #facc15;
+      font-size: 18px;
+      pointer-events: none;
+      text-shadow: 2px 2px 0 #000;
+      animation: popup 0.8s forwards;
+      z-index: 200;
+    }
+    
+    @keyframes popup {
+      0% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(-50px); }
+    }
+    
+    .scanlines {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: repeating-linear-gradient(
+        transparent,
+        transparent 4px,
+        rgba(0, 0, 0, 0.12) 4px,
+        rgba(0, 0, 0, 0.12) 5px
+      );
+      pointer-events: none;
+      z-index: 90;
+      mix-blend-mode: multiply;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+  
+  <!-- Crosshair -->
+  <div class="crosshair" id="crosshair"></div>
+  
+  <!-- Start Screen -->
+  <div id="start-screen" class="ui-overlay panel retro-text" style="display: block;">
+    <h1>JOSHWAY</h1>
+    <div class="subtitle">COURAGE TO RISE • 3D STAR COIN ADVENTURE</div>
+    
+    <div style="margin: 20px 0; font-size: 11px; line-height: 1.7; color: #c0c0ff;">
+      Collect all Star Coins in each world to RISE to the next!<br>
+      Living Room → Backyard → Playground → City → Moon → <b>Open Starfield (zero-g!)</b> → Mars → Io<br>
+      HOLD SPACE to rise with your cape. Each world has unique music & challenges.<br>
+      Funny friends may get in the way (but they're just playing!)<br>
+      <span style="font-size:10px;opacity:0.8">Inspired by Maggie Isamoyer's Joshway books</span>
+    </div>
+    
+    <div>
+      <button id="start-btn" class="btn">BEGIN YOUR RISE</button>
+      <button id="howto-btn" class="btn" style="background:#334155;">HOW TO PLAY</button>
+    </div>
+    
+    <div style="margin: 12px 0; font-size: 10px;">
+      <div style="margin-bottom: 4px; color:#c0c0ff; font-size:9px;">CHOOSE YOUR HERO (click preview):</div>
+      <div id="char-select">
+        <!-- Populated by JS with 3D previews -->
+      </div>
+      <div id="char-desc" style="margin-top:4px; font-size:8px; color:#a5b4fc; min-height:12px; font-style:italic;"></div>
+    </div>
+
+    <div style="margin-top: 30px; font-size: 9px; opacity: 0.6;">
+      WASD MOVE • HOLD SPACE TO RISE • MOUSE LOOK • CLICK TO LOCK
+    </div>
+  </div>
+  
+  <!-- In-Game HUD -->
+  <div id="hud" class="ui-overlay retro-text" style="display: none;">
+    <div class="hud-left">
+      <div class="hud-item">
+        <div>
+          <div class="hud-label">COURAGE STARS</div>
+          <div><span id="coin-count" class="hud-value">00</span> <span id="coin-total" style="opacity:0.6;">/ 12</span></div>
+        </div>
+        <div class="coin-icon"></div>
+      </div>
+      
+      <div class="hud-item">
+        <div>
+          <div class="hud-label">COURAGE</div>
+          <div id="energy-bar"><div id="energy-fill"></div></div>
+        </div>
+      </div>
+      <div class="hud-item">
+        <div>
+          <div class="hud-label">SCORE</div>
+          <div id="score" class="hud-value" style="font-size:16px;">0000</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="hud-right">
+      <div class="hud-item" style="min-width: auto; padding: 8px 12px;">
+        <div style="text-align: right;">
+          <div class="hud-label">JOSHWAY</div>
+          <div id="level-name" class="hud-value" style="color:#f5d742; font-size:11px;">LIVING ROOM</div>
+        </div>
+      </div>
+      <div id="music-toggle" class="music-btn hud-item" style="min-width:auto; padding:6px 12px; margin-top:4px;" title="Toggle music (M key)">
+        ♪ MUSIC ON
+      </div>
+    </div>
+  </div>
+  
+  <!-- Instructions hint -->
+  <div id="instructions" class="retro-text" style="display: none;">
+    CLICK TO LOCK • WASD MOVE • HOLD SPACE = RISE WITH COURAGE (climb high while meter lasts) • Gather light orbs • M=music • ESC unlock
+  </div>
+  
+  <!-- Win Screen -->
+  <div id="win-screen" class="ui-overlay panel retro-text" style="display: none;">
+    <h2>YOU ROSE!</h2>
+    <div id="win-message" style="font-size:13px; margin-bottom: 24px; color:#a5b4fc;">YOU GATHERED EVERY COURAGE STAR</div>
+    
+    <div class="stat">STARS: <span id="final-coins" style="color:#facc15;">12 / 12</span></div>
+    <div class="stat">TIME: <span id="final-time" style="color:#4ade80;">--:--</span></div>
+    <div class="stat">SCORE: <span id="final-score" style="color:#facc15;">0000</span></div>
+    <div id="high-score" class="stat" style="color:#4ade80;"></div>
+    
+    <div style="margin-top: 32px;">
+      <button id="next-level-btn" class="btn" style="display:none;">NEXT WORLD</button>
+      <button id="replay-btn" class="btn">REPLAY LEVEL</button>
+      <button id="level-select-btn" class="btn" style="background:#334155;">LEVEL SELECT</button>
+    </div>
+    <div id="end-credits" style="margin-top: 14px; font-size: 9px; opacity: 0.5; display:none;">
+      Thanks for playing Joshway: Courage to Rise<br>
+      Inspired by Maggie Isamoyer's illustrations<br>
+      A 3D web adventure • Built with Three.js
+    </div>
+  </div>
+
+  <!-- Pause Screen -->
+  <div id="pause-screen" class="ui-overlay panel retro-text" style="display: none; text-align:center; padding:30px;">
+    <h2>PAUSED</h2>
+    <div style="margin:20px 0; font-size:12px; color:#c0c0ff;">JOSHWAY: Courage to Rise</div>
+    <button id="resume-btn" class="btn">RESUME</button><br>
+    <button id="restart-level-btn" class="btn" style="background:#334155;">RESTART LEVEL</button><br>
+    <button id="quit-btn" class="btn" style="background:#334155;">QUIT TO MENU</button>
+    <div style="margin-top:20px; font-size:9px; opacity:0.6;">ESC to resume • M for music</div>
+  </div>
+  
+  <div class="scanlines"></div>
+  
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
