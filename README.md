@@ -15,7 +15,9 @@ Worlds:
 - Volcanic Io (Jupiter's moon - mysterious challenges)
 
 Deployed at: https://joshway-starcoins.vercel.app
-(Standalone Vercel project. For joshway.app/starcoins slug: add rewrites in main project's vercel.json or alias subdomain starcoins.joshway.app )
+(Production Vercel project under AllianceOptimalLLC team: joshway-starcoins. Standalone deployment at root. For joshway.app/starcoins slug integration: add rewrites in the main project's vercel.json or use subdomain alias like starcoins.joshway.app.)
+
+GitHub: https://github.com/AllianceOptimalLLC/Joshway-Game-Coin-Star
 
 Each world has its own unique chiptune music, coin challenges, gravity, and funny CPU pals (kids, toys, aliens) that bump, distract, and entertain without harming you.
 
