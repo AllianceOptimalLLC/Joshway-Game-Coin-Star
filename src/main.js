@@ -2164,67 +2164,113 @@ function renderHeroPreview(charIndex, canvas) {
 
 function setupLevelSelect() {
   const start = document.getElementById('start-screen');
-  if (!start || document.getElementById('level-select')) return;
+  // Always rebuild to ensure correct display, highlights, buttons after reloads/menus
+  const oldSel = document.getElementById('level-select');
+  if (oldSel) oldSel.remove();
+  const oldInfo = document.getElementById('selected-world-info');
+  if (oldInfo) oldInfo.remove();
+  const oldPlay = document.getElementById('play-selected-btn');
+  if (oldPlay) oldPlay.remove();
+  const oldLabel = document.getElementById('level-selected-label');
+  if (oldLabel) oldLabel.remove();
 
   const div = document.createElement('div');
   div.id = 'level-select';
-  div.style.margin = '8px 0 6px';
+  div.style.margin = '6px 0 3px';
+  div.style.padding = '3px';
+  div.style.background = 'rgba(15,15,40,0.65)';
+  div.style.border = '2px solid #475569';
+  div.style.borderRadius = '3px';
   const completed = beatenLevels.length;
-  div.innerHTML = `<div style="font-size:9px; color:#c0c0ff; margin-bottom:3px; text-align:center;">WORLDS • ${completed}/8 RISEN</div>`;
+  div.innerHTML = `<div style="font-size:8px; color:#c0c0ff; margin-bottom:3px; text-align:center; letter-spacing:0.5px;">WORLDS • ${completed}/8 RISEN • CLICK CARD TO SELECT</div>`;
   div.style.display = 'grid';
   div.style.gridTemplateColumns = 'repeat(4, 1fr)';
-  div.style.gap = '4px';
+  div.style.gap = '3px';
+
+  // Ensure valid selectedLevel (for UX separate from currentLevel until play)
+  if (typeof selectedLevel !== 'number' || selectedLevel < 0 || selectedLevel >= LEVELS.length) {
+    selectedLevel = 0;
+  }
+  // If first run or no beaten, start at 0
+  if (beatenLevels.length === 0) selectedLevel = 0;
 
   LEVELS.forEach((lvl, idx) => {
     const card = document.createElement('div');
-    card.style.background = 'rgba(20,20,50,0.7)';
+    card.style.background = 'rgba(20,20,50,0.85)';
     card.style.border = '2px solid #64748b';
-    card.style.padding = '3px';
-    card.style.fontSize = '7px';
+    card.style.padding = '2px 1px';
+    card.style.fontSize = '6px';
     card.style.cursor = 'pointer';
     card.style.textAlign = 'center';
     card.style.borderRadius = '2px';
+    card.style.minHeight = '68px';
+    card.dataset.idx = String(idx);
 
     const unlocked = idx === 0 || beatenLevels.includes(idx - 1);
     const high = JSON.parse(localStorage.getItem(`joshway_high_${idx}`) || '{}');
 
-    // Mini preview canvas (3D snapshot of world theme)
+    // Mini preview canvas (3D snapshot of world theme) - ensure renders correctly
     const prevCanvas = document.createElement('canvas');
-    prevCanvas.width = 58; prevCanvas.height = 42;
-    prevCanvas.style.border = '1px solid #fff';
+    prevCanvas.width = 54; prevCanvas.height = 36;
+    prevCanvas.style.border = '1px solid #334155';
     prevCanvas.style.display = 'block';
     prevCanvas.style.margin = '0 auto 1px';
+    prevCanvas.style.background = '#0a0a1a';
     card.appendChild(prevCanvas);
 
     const nameDiv = document.createElement('div');
-    nameDiv.textContent = lvl.name.toUpperCase().slice(0,13);
+    nameDiv.textContent = lvl.name.toUpperCase().slice(0,12);
     nameDiv.style.color = unlocked ? '#f5d742' : '#64748b';
-    nameDiv.style.fontSize = '6px';
+    nameDiv.style.fontSize = '5px';
+    nameDiv.style.fontWeight = 'bold';
+    nameDiv.style.lineHeight = '1.1';
     card.appendChild(nameDiv);
 
     if (unlocked && high.score) {
       const hs = document.createElement('div');
-      hs.textContent = `★${high.score} ${high.time||'--'}s`;
-      hs.style.fontSize = '6px'; hs.style.color = '#4ade80';
+      const t = (high.time !== undefined) ? high.time.toFixed(1) : '--';
+      hs.textContent = `★${high.score} ${t}s`;
+      hs.style.fontSize = '4.5px';
+      hs.style.color = '#4ade80';
+      hs.style.marginTop = '-1px';
       card.appendChild(hs);
+      if (high.secrets > 0) {
+        const secEl = document.createElement('div');
+        secEl.textContent = `+${high.secrets}★ SECRET`;
+        secEl.style.fontSize = '4px';
+        secEl.style.color = '#facc15';
+        card.appendChild(secEl);
+      }
     } else if (!unlocked) {
       nameDiv.textContent += ' 🔒';
     }
 
-    // Render quick themed preview
+    // Render quick themed preview - always call to ensure displays
     renderLevelPreview(idx, prevCanvas);
 
     card.onclick = () => {
       if (unlocked) {
-        currentLevel = idx;
-        // highlight
-        div.querySelectorAll('div').forEach(c => c.style.border = '2px solid #64748b');
-        card.style.border = '2px solid #4ade80';
+        selectedLevel = idx;
+        // Re-highlight correctly (only level cards)
+        div.querySelectorAll('div[data-idx]').forEach(c => {
+          c.style.border = '2px solid #64748b';
+          c.style.background = 'rgba(20,20,50,0.85)';
+        });
+        card.style.border = '3px solid #4ade80';
+        card.style.background = 'rgba(25,35,65,0.95)';
+        // update labels
+        const lab = document.getElementById('level-selected-label');
+        if (lab) lab.textContent = `SELECTED: ${lvl.name.toUpperCase()}`;
       } else {
         spawnCollectText({x:0,y:0,z:0}, 'COMPLETE PREVIOUS TO UNLOCK!');
       }
     };
-    if (idx === 0) card.style.border = '2px solid #4ade80';
+
+    // Default selected highlight (use selectedLevel)
+    if (idx === selectedLevel) {
+      card.style.border = '3px solid #4ade80';
+      card.style.background = 'rgba(25,35,65,0.95)';
+    }
 
     div.appendChild(card);
   });
@@ -2236,57 +2282,40 @@ function setupLevelSelect() {
     start.appendChild(div);
   }
 
+  // Selected label for clarity
+  const selLabel = document.createElement('div');
+  selLabel.id = 'level-selected-label';
+  selLabel.style.fontSize = '7px';
+  selLabel.style.color = '#4ade80';
+  selLabel.style.textAlign = 'center';
+  selLabel.style.margin = '2px 0 1px';
+  selLabel.style.fontWeight = 'bold';
+  const cur = LEVELS[selectedLevel] || LEVELS[0];
+  selLabel.textContent = `SELECTED: ${(cur.name || 'LIVING ROOM').toUpperCase()}`;
+  if (div.parentNode) {
+    div.parentNode.insertBefore(selLabel, div.nextSibling);
+  }
+
+  // PLAY SELECTED button next to grid - explicit UX to start after choosing
+  const playSelBtn = document.createElement('button');
+  playSelBtn.id = 'play-selected-btn';
+  playSelBtn.className = 'btn';
+  playSelBtn.style.fontSize = '10px';
+  playSelBtn.style.padding = '7px 16px';
+  playSelBtn.style.margin = '3px auto 8px';
+  playSelBtn.style.display = 'block';
+  playSelBtn.style.background = '#166534';
+  playSelBtn.style.border = '2px solid #4ade80';
+  playSelBtn.textContent = '▶ PLAY SELECTED WORLD';
+  playSelBtn.onclick = () => {
+    const unlockedCheck = selectedLevel === 0 || beatenLevels.includes(selectedLevel - 1);
+    currentLevel = unlockedCheck ? selectedLevel : 0;
+    startGame();
+  };
+  start.appendChild(playSelBtn);
+
   // Add high scores button + full table launcher
   addHighScoreButton(start);
-
-  // Production polish: selected world indicator + dedicated PLAY SELECTED button for explicit level start flow
-  let selInfo = document.getElementById('selected-world-info');
-  if (!selInfo) {
-    selInfo = document.createElement('div');
-    selInfo.id = 'selected-world-info';
-    selInfo.style.fontSize = '9px';
-    selInfo.style.color = '#4ade80';
-    selInfo.style.margin = '6px 0 2px';
-    selInfo.style.textAlign = 'center';
-    start.insertBefore(selInfo, div.nextSibling);
-  }
-
-  function updateSelectedInfo() {
-    const lvl = LEVELS[currentLevel] || LEVELS[0];
-    selInfo.textContent = `SELECTED: ${lvl.name.toUpperCase()}`;
-    selInfo.style.color = '#f5d742';
-  }
-  // initial
-  updateSelectedInfo();
-
-  // Attach to existing cards to refresh label on pick
-  div.querySelectorAll('div').forEach((c, i) => {
-    const orig = c.onclick;
-    c.onclick = (e) => {
-      if (orig) orig(e);
-      // refresh label after click handler
-      setTimeout(updateSelectedInfo, 10);
-    };
-  });
-
-  // Dedicated PLAY SELECTED WORLD button (in addition to main BEGIN)
-  let playSel = document.getElementById('play-selected-btn');
-  if (!playSel) {
-    playSel = document.createElement('button');
-    playSel.id = 'play-selected-btn';
-    playSel.className = 'btn';
-    playSel.style.background = '#166534';
-    playSel.style.fontSize = '11px';
-    playSel.style.padding = '8px 18px';
-    playSel.textContent = '▶ PLAY SELECTED WORLD';
-    playSel.style.marginTop = '4px';
-    playSel.onclick = () => {
-      // ensure currentLevel valid
-      if (typeof currentLevel !== 'number' || currentLevel < 0) currentLevel = 0;
-      startGame();
-    };
-    start.appendChild(playSel);
-  }
 }
 
 function renderLevelPreview(lvlIdx, canvas) {
@@ -2387,8 +2416,12 @@ function startGame() {
   const instr = document.getElementById('instructions');
   
   // Recreate player with chosen character (selection happens before start)
-  // currentLevel may have been set via level select UI; default 0 if not
+  // currentLevel may have been set via level select UI + PLAY SELECTED; sync selectedLevel
   if (typeof currentLevel === 'undefined' || currentLevel < 0) currentLevel = 0;
+  if (typeof selectedLevel === 'number' && selectedLevel >= 0) {
+    // if user used cards or play button, prefer it (already synced usually)
+    if (currentLevel !== selectedLevel) currentLevel = selectedLevel;
+  }
   if (playerGroup) {
     scene.remove(playerGroup);
     playerGroup = null;
@@ -2577,9 +2610,13 @@ function endGame() {
 
 function saveHighScore(level, sc, tm) {
   const key = `joshway_high_${level}`;
-  const current = JSON.parse(localStorage.getItem(key) || '{"score":0,"time":999}');
-  if (sc > current.score || (sc === current.score && tm < current.time)) {
-    localStorage.setItem(key, JSON.stringify({score: sc, time: tm}));
+  const current = JSON.parse(localStorage.getItem(key) || '{"score":0,"time":999,"secrets":0}');
+  const secs = bonusCoinsCollected || 0;
+  const betterScore = (sc > (current.score || 0));
+  const sameScoreFaster = (sc === (current.score || 0) && tm < (current.time || 999));
+  const moreSecrets = (secs > (current.secrets || 0));
+  if (betterScore || sameScoreFaster || moreSecrets) {
+    localStorage.setItem(key, JSON.stringify({score: sc, time: tm, secrets: Math.max(secs, current.secrets || 0)}));
   }
   // Mark level as beaten
   if (!beatenLevels.includes(level)) {
