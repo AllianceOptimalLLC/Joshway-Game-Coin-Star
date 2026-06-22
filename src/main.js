@@ -2042,7 +2042,12 @@ function setupInput() {
   });
   
   // Start / replay buttons
-  document.getElementById('start-btn').addEventListener('click', startGame);
+  // Make primary BEGIN button also respect the level select choice for seamless UX
+  document.getElementById('start-btn').addEventListener('click', () => {
+    const unlockedCheck = (typeof selectedLevel === 'number') && (selectedLevel === 0 || beatenLevels.includes(selectedLevel - 1));
+    currentLevel = unlockedCheck ? selectedLevel : 0;
+    startGame();
+  });
   document.getElementById('howto-btn').addEventListener('click', () => {
     const s = document.getElementById('start-screen');
     s.innerHTML = `
@@ -2632,6 +2637,12 @@ function endGame() {
   
   // Save high score (also marks beaten)
   saveHighScore(currentLevel, finalScore, parseFloat(gameTime));
+
+  // Auto-select next level for convenience on return to menu (production polish)
+  const nextCandidate = currentLevel + 1;
+  if (nextCandidate < LEVELS.length && (nextCandidate === 0 || beatenLevels.includes(nextCandidate - 1) || beatenLevels.includes(currentLevel))) {
+    selectedLevel = nextCandidate;
+  }
   
   // Setup buttons
   const nextBtn = document.getElementById('next-level-btn');
