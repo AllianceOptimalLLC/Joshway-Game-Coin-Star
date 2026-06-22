@@ -2400,7 +2400,8 @@ function showHighScoreTable() {
     const sc = h.score ? String(h.score).padStart(5,'0') : '-----';
     const tm = h.time ? h.time.toFixed(1) + 's' : '--:--';
     const st = beat ? 'RISEN ✓' : 'LOCKED';
-    html += `<tr style="border-bottom:1px solid #475569"><td>${l.name}</td><td style="color:#facc15">${sc}</td><td style="color:#4ade80">${tm}</td><td style="font-size:9px;${beat?'color:#4ade80':''}">${st}</td></tr>`;
+    const secTxt = h.secrets ? ` +${h.secrets}★` : '';
+    html += `<tr style="border-bottom:1px solid #475569"><td>${l.name}</td><td style="color:#facc15">${sc}${secTxt}</td><td style="color:#4ade80">${tm}</td><td style="font-size:9px;${beat?'color:#4ade80':''}">${st}</td></tr>`;
   });
   html += `</table>`;
   html += `<div style="margin-top:10px;font-size:11px;color:#f5d742">TOTAL BEST: ${totalScore} • ${completed}/8 WORLDS RISEN</div>`;
@@ -2598,10 +2599,30 @@ function endGame() {
     if (i) i.style.display = 'block';
   };
   if (levelSelectBtn) levelSelectBtn.onclick = () => {
-    // Enhanced: show high scores table first for full production end flow
+    // Better production flow: return to polished start menu + level select, no full reload
     win.style.display = 'none';
     showHighScoreTable();
-    setTimeout(() => { if (confirm('Return to main menu?')) location.reload(); }, 650);
+    setTimeout(() => {
+      const hs = document.getElementById('hs-modal');
+      if (hs) hs.style.display = 'none';
+      // Show start screen with fresh level select + char previews
+      const startSc = document.getElementById('start-screen');
+      if (startSc) {
+        startSc.style.display = 'block';
+        // Rebuild selects cleanly for correct display after game
+        selectedLevel = Math.min(currentLevel || 0, LEVELS.length-1);
+        const oldLS = document.getElementById('level-select');
+        if (oldLS) oldLS.remove();
+        const oldP = document.getElementById('play-selected-btn');
+        if (oldP) oldP.remove();
+        const oldL = document.getElementById('level-selected-label');
+        if (oldL) oldL.remove();
+        const oldHS = document.getElementById('highscores-btn');
+        if (oldHS) oldHS.remove();
+        setupLevelSelect();
+        setupCharacterSelect(); // refresh previews
+      }
+    }, 420);
   };
   
   // Unlock pointer
