@@ -61,6 +61,7 @@ let powerups = []; // energy refills for real gameplay strategy
 let hazard = null; // simple moving toy hazard for challenge / real game feel
 
 let currentLevel = 0;
+let selectedLevel = 0; // for level select UI
 const LEVELS = [
   { name: "Cozy Living Room", music: "cozy", gravity: -22, sky: 0x87ceeb, ground: 0x8b7355 },
   { name: "Backyard", music: "playful", gravity: -26, sky: 0x98fb98, ground: 0x228b22 },
@@ -2237,6 +2238,55 @@ function setupLevelSelect() {
 
   // Add high scores button + full table launcher
   addHighScoreButton(start);
+
+  // Production polish: selected world indicator + dedicated PLAY SELECTED button for explicit level start flow
+  let selInfo = document.getElementById('selected-world-info');
+  if (!selInfo) {
+    selInfo = document.createElement('div');
+    selInfo.id = 'selected-world-info';
+    selInfo.style.fontSize = '9px';
+    selInfo.style.color = '#4ade80';
+    selInfo.style.margin = '6px 0 2px';
+    selInfo.style.textAlign = 'center';
+    start.insertBefore(selInfo, div.nextSibling);
+  }
+
+  function updateSelectedInfo() {
+    const lvl = LEVELS[currentLevel] || LEVELS[0];
+    selInfo.textContent = `SELECTED: ${lvl.name.toUpperCase()}`;
+    selInfo.style.color = '#f5d742';
+  }
+  // initial
+  updateSelectedInfo();
+
+  // Attach to existing cards to refresh label on pick
+  div.querySelectorAll('div').forEach((c, i) => {
+    const orig = c.onclick;
+    c.onclick = (e) => {
+      if (orig) orig(e);
+      // refresh label after click handler
+      setTimeout(updateSelectedInfo, 10);
+    };
+  });
+
+  // Dedicated PLAY SELECTED WORLD button (in addition to main BEGIN)
+  let playSel = document.getElementById('play-selected-btn');
+  if (!playSel) {
+    playSel = document.createElement('button');
+    playSel.id = 'play-selected-btn';
+    playSel.className = 'btn';
+    playSel.style.background = '#166534';
+    playSel.style.fontSize = '11px';
+    playSel.style.padding = '8px 18px';
+    playSel.textContent = '▶ PLAY SELECTED WORLD';
+    playSel.style.marginTop = '4px';
+    playSel.onclick = () => {
+      // ensure currentLevel valid
+      if (typeof currentLevel !== 'number' || currentLevel < 0) currentLevel = 0;
+      startGame();
+    };
+    start.appendChild(playSel);
+  }
 }
 
 function renderLevelPreview(lvlIdx, canvas) {
