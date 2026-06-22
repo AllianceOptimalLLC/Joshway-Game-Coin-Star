@@ -1092,6 +1092,7 @@ function createPowerupMesh(type = 'energy') {
   let ringCol = 0x86efac;
   if (type === 'magnet') { col = 0xa78bfa; ringCol = 0xc4b5fd; }
   else if (type === 'surge') { col = 0xfacc15; ringCol = 0xfef08c; }
+  else if (type === 'boost') { col = 0x60a5fa; ringCol = 0xbae6fd; } // new extra powerup type
 
   const orb = new THREE.Mesh(
     new THREE.SphereGeometry(0.24, 13, 11),
@@ -1553,7 +1554,14 @@ function updateNPCs(dt) {
       player.velocity.x += pushX * pushFactor;
       player.velocity.z += pushZ * pushFactor;
       if (Math.random() < 0.028) {
-        const msgs = (ud.type==='starfloat') ? ["Wheeee!", "Space hug!", "Zoom!"] : (ud.type==='ioalien'?["Gloop!", "Hot!", "Friend?"] : ["Hehe!", "Oops!", "Tag!", "Whee!"]);
+        let msgs;
+        if (ud.type === 'starfloat') msgs = ["Wheeee!", "Space hug!", "Zoom!", "Drift with me!", "Stars are friends!"];
+        else if (ud.type === 'ioalien') msgs = ["Gloop!", "Hot lava fun!", "Friend? Rise up!", "Boing boing!", "You got this!"];
+        else if (ud.type === 'marsrock') msgs = ["Crunch!", "Red dust!", "Steady now!", "Bump bump!"];
+        else if (ud.type === 'moonbot') msgs = ["Beep beep...", "Low grav good!", "Float float!", "Nice cape!"];
+        else if (ud.type === 'playpal') msgs = ["Slide time!", "Tag you're it!", "Higher!", "Wheee playground!"];
+        else if (ud.type === 'citykid') msgs = ["Watch out cars!", "City is big!", "Cool moves!", "Race ya!"];
+        else msgs = ["Keep rising!", "Refuel your courage!", "Secrets are everywhere!", "Your cape is power!", "Friends help you rise!", "You can do it!", "Go go Joshway!"];
         spawnCollectText(npc.position, msgs[Math.floor(Math.random()*msgs.length)]);
       }
       if (Math.random() < 0.004 && coins.length > 0) {
@@ -1974,12 +1982,16 @@ function setupInput() {
       }
       if (nearest) {
         const ud = nearest.userData || {};
-        const hints = ud.type === 'starfloat' ? ["Zero-g is freedom!", "Drift to the stars!", "Collect in the void!"] :
-                      ud.type === 'ioalien' ? ["Lava is warm!", "Rise above!", "Bump me again!"] :
-                      ["Keep rising!", "Refuel your courage!", "Secrets are everywhere!", "Your cape is power!", "Friends help you rise!"];
+        let hints;
+        if (ud.type === 'starfloat') hints = ["Zero-g is freedom!", "Drift to the stars!", "Collect in the void!", "Momentum is key!"];
+        else if (ud.type === 'ioalien') hints = ["Lava is warm!", "Rise above geysers!", "Bump me again!", "Final world courage!"];
+        else if (ud.type === 'marsrock') hints = ["Sand slows you...", "Find the high dunes!", "Keep going brave one!"];
+        else if (ud.type === 'moonbot') hints = ["Low grav dreams!", "Hop between craters!", "Refuel and float!"];
+        else if (ud.type === 'playpal' || ud.type === 'pal') hints = ["Secrets behind things!", "Use double jump!", "Friends believe in you!", "Courage to rise!"];
+        else hints = ["Keep rising!", "Refuel your courage!", "Secrets are everywhere!", "Your cape is power!", "Friends help you rise!", "You got the heart!", "Every star counts!"];
         spawnCollectText(nearest.position, hints[Math.floor(Math.random()*hints.length)]);
-        player.energy = Math.min(1, player.energy + 0.18);
-        score += 15; // tiny friendship bonus
+        player.energy = Math.min(1, player.energy + 0.22);
+        score += 18; // tiny friendship bonus
         updateHUD();
       }
     }
